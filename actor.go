@@ -11,13 +11,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
 
 	rpc "github.com/conformal/btcrpcclient"
-	"github.com/conformal/btcutil"
+	//"github.com/conformal/btcutil"
 )
 
 // ChainServer describes the arguments necessary to connect a btcwallet
@@ -26,6 +25,8 @@ type ChainServer struct {
 	connect string
 	user    string
 	pass    string
+	cert    string
+	key     string
 }
 
 // Actor describes an actor on the simulation network.  Each actor runs
@@ -46,8 +47,8 @@ type Actor struct {
 // between all actors.
 const (
 	actorWalletPassphrase = "banana"
-	actorRPCUser          = "potato"
-	actorRPCPass          = "carrot"
+	actorRPCUser          = "michalis"
+	actorRPCPass          = "kbxkwb"
 )
 
 // NewActor creates a new actor which runs its own wallet process connecting
@@ -57,16 +58,6 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 	// Please don't run this as root.
 	if port < 1024 {
 		return nil, errors.New("invalid actor port")
-	}
-
-	// TODO: probably a better idea to write a single keypair and each
-	// actor (and btcd) can reference it with the --rpccert and --rpckey
-	// options.  Switch to that when we start spawning our own simnet
-	// btcd instances.
-	validUntil := time.Now().Add(10 * 365 * 24 * time.Hour)
-	cert, key, err := btcutil.NewTLSCertPair("actor", validUntil, nil)
-	if err != nil {
-		return nil, err
 	}
 
 	dir, err := ioutil.TempDir("", "actor")
@@ -79,8 +70,6 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 			chainSvr:         *chain,
 			dir:              dir,
 			port:             strconv.FormatUint(uint64(port), 10),
-			rpcCert:          cert,
-			rpcKey:           key,
 			rpcUser:          actorRPCUser,
 			rpcPass:          actorRPCPass,
 			walletPassphrase: actorWalletPassphrase,
@@ -108,10 +97,6 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return errors.New("actor command previously created")
 	}
 
-	if err := a.writeCertPair(); err != nil {
-		return err
-	}
-
 	// Create and start command in background.
 	a.cmd = a.args.Cmd()
 	a.cmd.Stdout = stderr
@@ -124,14 +109,20 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return err
 	}
 
+	cert, err := ioutil.ReadFile(a.args.chainSvr.cert)
+	if err != nil {
+		log.Fatalf("Cannot read certificate: %v", err)
+	}
+
 	// Create and start RPC client.
 	rpcConf := rpc.ConnConfig{
 		Host:         "localhost:" + a.args.port,
 		Endpoint:     "frontend",
 		User:         a.args.rpcUser,
 		Pass:         a.args.rpcPass,
-		Certificates: a.args.rpcCert,
+		Certificates: cert,
 	}
+
 	// The RPC client will not wait for the RPC server to start up, so
 	// loop a few times and attempt additional connections, sleeping
 	// after each failure.
@@ -158,7 +149,7 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 	}
 
 	// Create the wallet.
-	err := a.client.CreateEncryptedWallet(a.args.walletPassphrase)
+	err = a.client.CreateEncryptedWallet(a.args.walletPassphrase)
 	if err != nil {
 		if err := a.cmd.Process.Kill(); err != nil {
 			log.Printf("Cannot kill wallet process after failed "+
@@ -171,8 +162,20 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return err
 	}
 
-	// Start actor behavior goroutines.
-	a.wg.Add(0) // Increment for each goroutine run
+	// Create wallet addresses
+	/*addressSpace := make([]btcutil.Address, 1000)
+	for i := 0; i < 1000; i++ {
+		a.wg.Add(1)
+		go func(i int) {
+			defer a.wg.Done()
+			addr, err := client.GetNewAddress()
+			if err != nil {
+				log.Fatal("Cannot create address #%d:", i+1)
+			}
+			addressSpace[i] = addr
+		}(i)
+	}
+	a.wg.Wait()*/
 
 	return nil
 }
@@ -193,30 +196,10 @@ func (a *Actor) Cleanup() error {
 	return os.RemoveAll(a.args.dir)
 }
 
-// writeCertPair writes the TLS certificate and key to the wallet process's
-// home directory.  It is necessary to generate certificates here rather than
-// letting the wallet auto generate them to prevent a race where we can't
-// establish an rpc client connection due to missing a missing cert file.
-//
-// It's assumed the actor directory already exists at this point (due to a call
-// to ioutil.TempDir).
-func (a *Actor) writeCertPair() error {
-	certPath := filepath.Join(a.args.dir, "rpc.cert")
-	keyPath := filepath.Join(a.args.dir, "rpc.key")
-
-	err := ioutil.WriteFile(certPath, a.args.rpcCert, 0666)
-	if err != nil {
-		return err
-	}
-	return ioutil.WriteFile(keyPath, a.args.rpcKey, 0600)
-}
-
 type procArgs struct {
 	chainSvr         ChainServer
 	dir              string
 	port             string
-	rpcCert          []byte
-	rpcKey           []byte
 	rpcUser          string
 	rpcPass          string
 	walletPassphrase string
@@ -235,5 +218,7 @@ func (p *procArgs) args() []string {
 		"--btcdusername=" + p.chainSvr.user,
 		"--btcdpassword=" + p.chainSvr.pass,
 		"--rpclisten=:" + p.port,
+		"--rpccert=" + p.chainSvr.cert,
+		"--rpckey=" + p.chainSvr.key,
 	}
 }

@@ -5,8 +5,11 @@
 package main
 
 import (
+	"github.com/conformal/btcutil"
 	"log"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -15,12 +18,35 @@ import (
 // flag, and each actor can connect to the spawned btcd process.
 var defaultChainServer = ChainServer{
 	connect: "localhost:18334", // local testnet btcd
-	user:    "fillmein",
-	pass:    "fillmein",
+	user:    "michalis",
+	pass:    "kbxkwb",
+}
+
+type btcdCmdArgs struct {
+	rpcUser string
+	rpcPass string
+	rpcCert string
+	rpcKey  string
 }
 
 func main() {
 	actors := make([]*Actor, 0, 1) // Set cap to expected num of actors run
+
+	btcdHomeDir := btcutil.AppDataDir("btcd", false)
+	defaultChainServer.cert = filepath.Join(btcdHomeDir, "rpc.cert")
+	defaultChainServer.key = filepath.Join(btcdHomeDir, "rpc.key")
+
+	cmdArgs := &btcdCmdArgs{
+		rpcUser: defaultChainServer.user,
+		rpcPass: defaultChainServer.pass,
+		rpcCert: defaultChainServer.cert,
+		rpcKey:  defaultChainServer.key,
+	}
+
+	log.Println("Starting btcd on testnet...")
+	if err := exec.Command("btcd", cmdArgs.args()...).Start(); err != nil {
+		log.Fatal("Couldn't start btcd: %v", err)
+	}
 
 	// If we panic somewhere, at least try to stop the spawned wallet
 	// processes.
@@ -61,4 +87,14 @@ func main() {
 		log.Fatalf("Cannot cleanup actor directory: %v", err)
 	}
 	log.Println("Actor shutdown successfully")
+}
+
+func (p *btcdCmdArgs) args() []string {
+	return []string{
+		"--testnet",
+		"--username=" + p.rpcUser,
+		"--password=" + p.rpcPass,
+		"--rpccert=" + p.rpcCert,
+		"--rpckey=" + p.rpcKey,
+	}
 }
