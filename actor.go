@@ -168,20 +168,40 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return err
 	}
 
-	// Create wallet addresses
-	/*addressSpace := make([]btcutil.Address, 1000)
-	for i := 0; i < 1000; i++ {
-		a.wg.Add(1)
-		go func(i int) {
-			defer a.wg.Done()
-			addr, err := client.GetNewAddress()
-			if err != nil {
-				log.Fatalf("Cannot create address #%d: %v", i+1, err)
-			}
-			addressSpace[i] = addr
-		}(i)
-	}
-	a.wg.Wait()*/
+	/*
+		// Create wallet addresses.
+		addressSpace := make([]btcutil.Address, 1000)
+		for i := 0; i < 1000; i++ {
+			a.wg.Add(1)
+			go func(i int) {
+				defer a.wg.Done()
+				addr, err := client.GetNewAddress()
+				if err != nil {
+					log.Fatalf("Cannot create address #%d: %v", i+1, err)
+				}
+				addressSpace[i] = addr
+			}(i)
+		}
+		a.wg.Wait()
+
+		// Start sending funds to the addresses the wallet already owns.
+		// At this point we are just going to iterate over our address slice
+		// without any use of concurrent primitives. Most of the following code
+		// should change once we move to use of many actors.
+		if balance, err := a.client.GetBalance("*"); err != nil {
+			log.Fatalf("Cannot see account balance: %v", err)
+		}
+		if balance < 0 {
+			log.Println("Insufficient funds! Exiting...")
+			return nil
+		}
+
+		// Tx per second
+		for _ = range time.Tick(time.Second) {
+		// TODO: start by SendingFrom three txs
+		}
+
+	*/
 
 	return nil
 }
