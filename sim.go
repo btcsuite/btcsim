@@ -6,6 +6,7 @@ package main
 
 import (
 	"github.com/conformal/btcutil"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -17,7 +18,7 @@ import (
 // each actor. This should be changed to start a new btcd with the --simnet
 // flag, and each actor can connect to the spawned btcd process.
 var defaultChainServer = ChainServer{
-	connect: "localhost:18334", // local testnet btcd
+	connect: "localhost:18556", // local simnet btcd
 	user:    "michalis",
 	pass:    "kbxkwb",
 }
@@ -33,14 +34,19 @@ func main() {
 	actors := make([]*Actor, 0, 1) // Set cap to expected num of actors run
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
-	defaultChainServer.cert = filepath.Join(btcdHomeDir, "rpc.cert")
-	defaultChainServer.key = filepath.Join(btcdHomeDir, "rpc.key")
+	cert, err := ioutil.ReadFile(filepath.Join(btcdHomeDir, "rpc.cert"))
+	if err != nil {
+		log.Fatalf("Cannot read certificate: %v", err)
+	}
+	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
+	defaultChainServer.keyPath = filepath.Join(btcdHomeDir, "rpc.key")
+	defaultChainServer.cert = cert
 
 	cmdArgs := &btcdCmdArgs{
 		rpcUser: defaultChainServer.user,
 		rpcPass: defaultChainServer.pass,
-		rpcCert: defaultChainServer.cert,
-		rpcKey:  defaultChainServer.key,
+		rpcCert: defaultChainServer.certPath,
+		rpcKey:  defaultChainServer.keyPath,
 	}
 
 	log.Println("Starting btcd on testnet...")
@@ -67,7 +73,7 @@ func main() {
 	}()
 
 	// Create actor.
-	a, err := NewActor(&defaultChainServer, 18444)
+	a, err := NewActor(&defaultChainServer, 18554)
 	if err != nil {
 		log.Fatalf("Cannot create actor: %v", err)
 	}
@@ -91,7 +97,7 @@ func main() {
 
 func (p *btcdCmdArgs) args() []string {
 	return []string{
-		"--testnet",
+		"--simnet",
 		"--username=" + p.rpcUser,
 		"--password=" + p.rpcPass,
 		"--rpccert=" + p.rpcCert,

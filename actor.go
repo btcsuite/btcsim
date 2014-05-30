@@ -22,11 +22,12 @@ import (
 // ChainServer describes the arguments necessary to connect a btcwallet
 // instance to a btcd websocket RPC server.
 type ChainServer struct {
-	connect string
-	user    string
-	pass    string
-	cert    string
-	key     string
+	connect  string
+	user     string
+	pass     string
+	certPath string
+	keyPath  string
+	cert     []byte
 }
 
 // Actor describes an actor on the simulation network.  Each actor runs
@@ -109,18 +110,13 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return err
 	}
 
-	cert, err := ioutil.ReadFile(a.args.chainSvr.cert)
-	if err != nil {
-		log.Fatalf("Cannot read certificate: %v", err)
-	}
-
 	// Create and start RPC client.
 	rpcConf := rpc.ConnConfig{
 		Host:         "localhost:" + a.args.port,
 		Endpoint:     "frontend",
 		User:         a.args.rpcUser,
 		Pass:         a.args.rpcPass,
-		Certificates: cert,
+		Certificates: a.args.chainSvr.cert,
 	}
 
 	// The RPC client will not wait for the RPC server to start up, so
@@ -149,7 +145,7 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 	}
 
 	// Create the wallet.
-	err = a.client.CreateEncryptedWallet(a.args.walletPassphrase)
+	err := a.client.CreateEncryptedWallet(a.args.walletPassphrase)
 	if err != nil {
 		if err := a.cmd.Process.Kill(); err != nil {
 			log.Printf("Cannot kill wallet process after failed "+
@@ -211,6 +207,7 @@ func (p *procArgs) Cmd() *exec.Cmd {
 
 func (p *procArgs) args() []string {
 	return []string{
+		"--simnet",
 		"--datadir=" + p.dir,
 		"--username=" + p.rpcUser,
 		"--password=" + p.rpcPass,
@@ -218,7 +215,7 @@ func (p *procArgs) args() []string {
 		"--btcdusername=" + p.chainSvr.user,
 		"--btcdpassword=" + p.chainSvr.pass,
 		"--rpclisten=:" + p.port,
-		"--rpccert=" + p.chainSvr.cert,
-		"--rpckey=" + p.chainSvr.key,
+		"--rpccert=" + p.chainSvr.certPath,
+		"--rpckey=" + p.chainSvr.keyPath,
 	}
 }
