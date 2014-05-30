@@ -49,9 +49,9 @@ func main() {
 		rpcKey:  defaultChainServer.keyPath,
 	}
 
-	log.Println("Starting btcd on testnet...")
+	log.Println("Starting btcd on simnet...")
 	if err := exec.Command("btcd", cmdArgs.args()...).Start(); err != nil {
-		log.Fatal("Couldn't start btcd: %v", err)
+		log.Fatalf("Couldn't start btcd: %v", err)
 	}
 
 	// If we panic somewhere, at least try to stop the spawned wallet

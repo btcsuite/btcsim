@@ -16,7 +16,8 @@ import (
 	"time"
 
 	rpc "github.com/conformal/btcrpcclient"
-	//"github.com/conformal/btcutil"
+	"github.com/conformal/btcutil"
+	"github.com/conformal/btcwire"
 )
 
 // ChainServer describes the arguments necessary to connect a btcwallet
@@ -51,6 +52,12 @@ const (
 	actorRPCUser          = "michalis"
 	actorRPCPass          = "kbxkwb"
 )
+
+var ntfnHandlers = rpc.NotificationHandlers{
+	OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
+		log.Printf("Transaction accepted: %v (%d)", hash, amount)
+	},
+}
 
 // NewActor creates a new actor which runs its own wallet process connecting
 // to the btcd chain server specified by chain, and listening for simulator
@@ -125,7 +132,7 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 	var client *rpc.Client
 	var connErr error
 	for i := 0; i < 5; i++ {
-		if client, connErr = rpc.New(&rpcConf, nil); connErr != nil {
+		if client, connErr = rpc.New(&rpcConf, &ntfnHandlers); connErr != nil {
 			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
 			continue
 		}
@@ -144,9 +151,12 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return connErr
 	}
 
+	/*if err := a.client.NotifyNewTransactions(false); err != nil {
+		log.Printf("Couldn't register client to receive notifications about new txs: %v", err)
+	}*/
+
 	// Create the wallet.
-	err := a.client.CreateEncryptedWallet(a.args.walletPassphrase)
-	if err != nil {
+	if err := a.client.CreateEncryptedWallet(a.args.walletPassphrase); err != nil {
 		if err := a.cmd.Process.Kill(); err != nil {
 			log.Printf("Cannot kill wallet process after failed "+
 				"wallet creation: %v", err)
@@ -166,7 +176,7 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 			defer a.wg.Done()
 			addr, err := client.GetNewAddress()
 			if err != nil {
-				log.Fatal("Cannot create address #%d:", i+1)
+				log.Fatalf("Cannot create address #%d: %v", i+1, err)
 			}
 			addressSpace[i] = addr
 		}(i)
