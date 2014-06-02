@@ -33,8 +33,8 @@ type btcdCmdArgs struct {
 func (p *btcdCmdArgs) args() []string {
 	return []string{
 		"--simnet",
-		"--username=" + p.rpcUser,
-		"--password=" + p.rpcPass,
+		"-u" + p.rpcUser,
+		"-P" + p.rpcPass,
 		"--rpccert=" + p.rpcCert,
 		"--rpckey=" + p.rpcKey,
 	}
@@ -48,9 +48,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Cannot read certificate: %v", err)
 	}
-	// Composite literals are more idiomatic Go code but don't change the following
-	// assignments to a composite literal since defaultChainServer's already initialized
-	// fields will be re-initialized to their zero values!
+	// Don't change the following assignments to a composite literal since defaultChainServer's
+	// already initialized fields will be re-initialized to their zero values.
 	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
 	defaultChainServer.keyPath = filepath.Join(btcdHomeDir, "rpc.key")
 	defaultChainServer.cert = cert

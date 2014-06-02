@@ -9,7 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	//"math/rand"
+	"math/rand"
 	"os"
 	"os/exec"
 	"strconv"
@@ -18,7 +18,7 @@ import (
 
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
-	"github.com/conformal/btcwire"
+	//"github.com/conformal/btcwire"
 )
 
 // ChainServer describes the arguments necessary to connect a btcwallet
@@ -53,14 +53,16 @@ const (
 	actorRPCUser          = "michalis"
 	actorRPCPass          = "kbxkwb"
 
-	addressNum  = 1000
+	addressNum  = 10
 	timeoutSecs = int64(3600 * 24)
 	txPerSec    = 3
 )
 
 var ntfnHandlers = rpc.NotificationHandlers{
-	OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-		log.Printf("Transaction accepted: %v (%d)", hash, amount)
+	OnBtcdConnected: func(connected bool) {
+		for !connected {
+			//Wait for btcd to connect
+		}
 	},
 }
 
@@ -156,9 +158,9 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return connErr
 	}
 
-	/*if err := a.client.NotifyNewTransactions(false); err != nil {
-		log.Printf("Couldn't register client to receive notifications about new txs: %v", err)
-	}*/
+	//if err := a.client.NotifyNewTransactions(false); err != nil {
+	//	log.Printf("Couldn't register client to receive notifications about new txs: %v", err)
+	//}
 
 	// Create the wallet.
 	if err := a.client.CreateEncryptedWallet(a.args.walletPassphrase); err != nil {
@@ -173,43 +175,40 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return err
 	}
 
-	/*
-		// Create wallet addresses.
-		addressSpace := make([]btcutil.Address, addressNum)
-		for i := 0; i < addressNum; i++ {
-			a.wg.Add(1)
-			go func(i int) {
-				defer a.wg.Done()
-				addr, err := client.GetNewAddress()
-				if err != nil {
-					log.Fatalf("Cannot create address #%d: %v", i+1, err)
-				}
-				addressSpace[i] = addr
-			}(i)
-		}
-		a.wg.Wait()
-
-		// Start sending funds to the addresses the wallet already owns.
-		// At this point we are just going to iterate over our address slice
-		// without any use of concurrent primitives. Most of the following code
-		// should change once we move to use of many actors.
-		a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs)
-		if balance, err := a.client.GetBalance("*"); err != nil {
-			log.Fatalf("Cannot see account balance: %v", err)
-		}
-		if balance < 0 {
-			log.Println("Insufficient funds! Exiting...")
-			return nil
-		}
-
-		// Tx per second
-		for _ = range time.Tick(time.Second) {
-			for i := 0; i < txPerSec; i++ {
-				a.client.SendFromMinConf("*", addressSpace[rand.Int() % addressNum], balance / 10, 0)
+	// Create wallet addresses.
+	addressSpace := make([]btcutil.Address, addressNum)
+	for i := 0; i < addressNum; i++ {
+		a.wg.Add(1)
+		go func(i int) {
+			defer a.wg.Done()
+			addr, err := client.GetNewAddress()
+			if err != nil {
+				log.Fatalf("Cannot create address #%d: %v", i+1, err)
 			}
-		}
+			addressSpace[i] = addr
+		}(i)
+	}
+	a.wg.Wait()
 
-	*/
+	// Start sending funds to the addresses the wallet already owns.
+	// At this point we are just going to iterate over our address slice
+	// without any use of concurrent primitives. Most of the following code
+	// should change once we move to use of many actors.
+	balance, err := a.client.GetBalanceMinConf("", 0)
+	if err != nil {
+		log.Fatalf("Cannot see account balance: %v", err)
+	}
+	if balance <= 0 {
+		log.Println("Insufficient funds! Exiting...")
+		return nil
+	}
+
+	// Tx per second
+	for _ = range time.Tick(time.Second) {
+		for i := 0; i < txPerSec; i++ {
+			a.client.SendFromMinConf("", addressSpace[rand.Int()%addressNum], balance/10, 0)
+		}
+	}
 
 	return nil
 }
@@ -250,8 +249,6 @@ func (p *procArgs) args() []string {
 		"--username=" + p.rpcUser,
 		"--password=" + p.rpcPass,
 		"--rpcconnect=" + p.chainSvr.connect,
-		"--btcdusername=" + p.chainSvr.user,
-		"--btcdpassword=" + p.chainSvr.pass,
 		"--rpclisten=:" + p.port,
 		"--rpccert=" + p.chainSvr.certPath,
 		"--rpckey=" + p.chainSvr.keyPath,
