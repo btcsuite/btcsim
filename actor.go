@@ -58,13 +58,16 @@ const (
 	txPerSec    = 3
 )
 
-var ntfnHandlers = rpc.NotificationHandlers{
-	OnBtcdConnected: func(connected bool) {
-		for !connected {
-			//Wait for btcd to connect
-		}
-	},
-}
+var (
+	connected    = make(chan struct{})
+	ntfnHandlers = rpc.NotificationHandlers{
+		OnBtcdConnected: func(conn bool) {
+			if conn {
+				connected <- struct{}{}
+			}
+		},
+	}
+)
 
 // NewActor creates a new actor which runs its own wallet process connecting
 // to the btcd chain server specified by chain, and listening for simulator
@@ -158,9 +161,7 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return connErr
 	}
 
-	//if err := a.client.NotifyNewTransactions(false); err != nil {
-	//	log.Printf("Couldn't register client to receive notifications about new txs: %v", err)
-	//}
+	<-connected
 
 	// Create the wallet.
 	if err := a.client.CreateEncryptedWallet(a.args.walletPassphrase); err != nil {
