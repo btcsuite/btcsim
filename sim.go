@@ -30,6 +30,16 @@ type btcdCmdArgs struct {
 	rpcKey  string
 }
 
+func (p *btcdCmdArgs) args() []string {
+	return []string{
+		"--simnet",
+		"--username=" + p.rpcUser,
+		"--password=" + p.rpcPass,
+		"--rpccert=" + p.rpcCert,
+		"--rpckey=" + p.rpcKey,
+	}
+}
+
 func main() {
 	actors := make([]*Actor, 0, 1) // Set cap to expected num of actors run
 
@@ -38,6 +48,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Cannot read certificate: %v", err)
 	}
+	// Composite literals are more idiomatic Go code but don't change the following
+	// assignments to a composite literal since defaultChainServer's already initialized
+	// fields will be re-initialized to their zero values!
 	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
 	defaultChainServer.keyPath = filepath.Join(btcdHomeDir, "rpc.key")
 	defaultChainServer.cert = cert
@@ -93,14 +106,4 @@ func main() {
 		log.Fatalf("Cannot cleanup actor directory: %v", err)
 	}
 	log.Println("Actor shutdown successfully")
-}
-
-func (p *btcdCmdArgs) args() []string {
-	return []string{
-		"--simnet",
-		"--username=" + p.rpcUser,
-		"--password=" + p.rpcPass,
-		"--rpccert=" + p.rpcCert,
-		"--rpckey=" + p.rpcKey,
-	}
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	//"math/rand"
 	"os"
 	"os/exec"
 	"strconv"
@@ -51,6 +52,10 @@ const (
 	actorWalletPassphrase = "banana"
 	actorRPCUser          = "michalis"
 	actorRPCPass          = "kbxkwb"
+
+	addressNum  = 1000
+	timeoutSecs = int64(3600 * 24)
+	txPerSec    = 3
 )
 
 var ntfnHandlers = rpc.NotificationHandlers{
@@ -170,8 +175,8 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 
 	/*
 		// Create wallet addresses.
-		addressSpace := make([]btcutil.Address, 1000)
-		for i := 0; i < 1000; i++ {
+		addressSpace := make([]btcutil.Address, addressNum)
+		for i := 0; i < addressNum; i++ {
 			a.wg.Add(1)
 			go func(i int) {
 				defer a.wg.Done()
@@ -188,6 +193,7 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		// At this point we are just going to iterate over our address slice
 		// without any use of concurrent primitives. Most of the following code
 		// should change once we move to use of many actors.
+		a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs)
 		if balance, err := a.client.GetBalance("*"); err != nil {
 			log.Fatalf("Cannot see account balance: %v", err)
 		}
@@ -198,7 +204,9 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 
 		// Tx per second
 		for _ = range time.Tick(time.Second) {
-		// TODO: start by SendingFrom three txs
+			for i := 0; i < txPerSec; i++ {
+				a.client.SendFromMinConf("*", addressSpace[rand.Int() % addressNum], balance / 10, 0)
+			}
 		}
 
 	*/
