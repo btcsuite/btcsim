@@ -59,11 +59,14 @@ const (
 )
 
 var (
+	once         sync.Once
 	connected    = make(chan struct{})
 	ntfnHandlers = rpc.NotificationHandlers{
 		OnBtcdConnected: func(conn bool) {
 			if conn {
-				connected <- struct{}{}
+				once.Do(func() {
+					connected <- struct{}{}
+				})
 			}
 		},
 	}
