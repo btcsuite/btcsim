@@ -40,8 +40,10 @@ func (p *btcdCmdArgs) args() []string {
 	}
 }
 
+const actorsAmount = 1
+
 func main() {
-	actors := make([]*Actor, 0, 1) // Set cap to expected num of actors run
+	actors := make([]*Actor, 0, actorsAmount) // Set cap to expected num of actors run
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
 	cert, err := ioutil.ReadFile(filepath.Join(btcdHomeDir, "rpc.cert"))

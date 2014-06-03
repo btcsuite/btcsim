@@ -60,12 +60,14 @@ const (
 
 var (
 	once         sync.Once
-	connected    = make(chan struct{})
+	connected    = make(chan struct{}, actorsAmount)
 	ntfnHandlers = rpc.NotificationHandlers{
 		OnBtcdConnected: func(conn bool) {
 			if conn {
 				once.Do(func() {
-					connected <- struct{}{}
+					for i := 0; i < actorsAmount; i++ {
+						connected <- struct{}{}
+					}
 				})
 			}
 		},
