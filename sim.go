@@ -11,8 +11,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 )
+
+// ChainServer describes the arguments necessary to connect a btcwallet
+// instance to a btcd websocket RPC server.
+type ChainServer struct {
+	connect  string
+	user     string
+	pass     string
+	certPath string
+	keyPath  string
+	cert     []byte
+}
 
 // For now, hardcode a single already-running btcd connection that is used for
 // each actor. This should be changed to start a new btcd with the --simnet
@@ -40,9 +52,8 @@ func (p *btcdCmdArgs) args() []string {
 	}
 }
 
-const actorsAmount = 1
-
 func main() {
+	var wg sync.WaitGroup
 	actors := make([]*Actor, 0, actorsAmount) // Set cap to expected num of actors run
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
@@ -86,25 +97,38 @@ func main() {
 		}
 	}()
 
-	// Create actor.
-	a, err := NewActor(&defaultChainServer, 18554)
-	if err != nil {
-		log.Fatalf("Cannot create actor: %v", err)
+	// Create actors.
+	for i := 0; i < actorsAmount; i++ {
+		// The way of assigning ports should definitely be reconsidered.
+		a, err := NewActor(&defaultChainServer, uint16(18554+(3*i)))
+		if err != nil {
+			log.Fatalf("Cannot create actor: %v", err)
+		}
+		actors = append(actors, a)
 	}
-	actors = append(actors, a)
 
 	// Start and run for a few seconds.
-	if err := a.Start(os.Stderr, os.Stdout); err != nil {
-		log.Fatalf("Cannot start actor: %v", err)
+	for _, a := range actors {
+		wg.Add(1)
+		go func(a *Actor) {
+			defer wg.Done()
+			if err := a.Start(os.Stderr, os.Stdout); err != nil {
+				log.Fatalf("Cannot start actor: %v", err)
+			}
+
+			log.Println("Running actor for a few seconds")
+			time.Sleep(3 * time.Second)
+			log.Println("Time to die")
+
+			if err := a.Stop(); err != nil {
+				log.Fatalf("Cannot stop actor: %v", err)
+			}
+			if err := a.Cleanup(); err != nil {
+				log.Fatalf("Cannot cleanup actor directory: %v", err)
+			}
+			log.Println("Actor shutdown successfully")
+		}(a)
 	}
-	log.Println("Running actor for a few seconds")
-	time.Sleep(3 * time.Second)
-	log.Println("Time to die")
-	if err := a.Stop(); err != nil {
-		log.Fatalf("Cannot stop actor: %v", err)
-	}
-	if err := a.Cleanup(); err != nil {
-		log.Fatalf("Cannot cleanup actor directory: %v", err)
-	}
-	log.Println("Actor shutdown successfully")
+	wg.Wait()
+	close(connected)
 }

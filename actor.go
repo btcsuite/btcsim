@@ -21,30 +21,6 @@ import (
 	//"github.com/conformal/btcwire"
 )
 
-// ChainServer describes the arguments necessary to connect a btcwallet
-// instance to a btcd websocket RPC server.
-type ChainServer struct {
-	connect  string
-	user     string
-	pass     string
-	certPath string
-	keyPath  string
-	cert     []byte
-}
-
-// Actor describes an actor on the simulation network.  Each actor runs
-// independantly without external input to decide it's behavior.
-type Actor struct {
-	args   procArgs
-	cmd    *exec.Cmd
-	client *rpc.Client
-
-	// Parameters specifying how actor behaves should be included here.
-
-	quit chan struct{}
-	wg   sync.WaitGroup
-}
-
 // These constants define the strings used for actor's authentication and
 // wallet encryption.  They are not needed to be secure, and are shared
 // between all actors.
@@ -53,9 +29,12 @@ const (
 	actorRPCUser          = "michalis"
 	actorRPCPass          = "kbxkwb"
 
-	addressNum  = 10
-	timeoutSecs = int64(3600 * 24)
-	txPerSec    = 3
+	// Number of addresses in a wallet
+	addressNum = 1000
+	// Allowed transactions per second
+	txPerSec = 3
+	// Number of actors
+	actorsAmount = 1
 )
 
 var (
@@ -73,6 +52,19 @@ var (
 		},
 	}
 )
+
+// Actor describes an actor on the simulation network.  Each actor runs
+// independantly without external input to decide it's behavior.
+type Actor struct {
+	args   procArgs
+	cmd    *exec.Cmd
+	client *rpc.Client
+
+	// Parameters specifying how actor behaves should be included here.
+
+	quit chan struct{}
+	wg   sync.WaitGroup
+}
 
 // NewActor creates a new actor which runs its own wallet process connecting
 // to the btcd chain server specified by chain, and listening for simulator
