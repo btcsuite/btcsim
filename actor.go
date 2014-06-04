@@ -25,9 +25,9 @@ import (
 // wallet encryption.  They are not needed to be secure, and are shared
 // between all actors.
 const (
-	actorWalletPassphrase = "banana"
-	actorRPCUser          = "michalis"
-	actorRPCPass          = "kbxkwb"
+	actorWalletPassphrase = "walletpass"
+	actorRPCUser          = "rpcuser"
+	actorRPCPass          = "rpcpass"
 
 	// Number of addresses in a wallet
 	addressNum = 1000
@@ -158,6 +158,7 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return connErr
 	}
 
+	// Wait for btcd to connect
 	<-connected
 
 	// Create the wallet.
@@ -175,18 +176,13 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 
 	// Create wallet addresses.
 	addressSpace := make([]btcutil.Address, addressNum)
-	for i := 0; i < addressNum; i++ {
-		a.wg.Add(1)
-		go func(i int) {
-			defer a.wg.Done()
-			addr, err := client.GetNewAddress()
-			if err != nil {
-				log.Fatalf("Cannot create address #%d: %v", i+1, err)
-			}
-			addressSpace[i] = addr
-		}(i)
+	for i := range addressSpace {
+		addr, err := client.GetNewAddress()
+		if err != nil {
+			log.Fatalf("Cannot create address #%d: %v", i+1, err)
+		}
+		addressSpace[i] = addr
 	}
-	a.wg.Wait()
 
 	// Start sending funds to the addresses the wallet already owns.
 	// At this point we are just going to iterate over our address slice

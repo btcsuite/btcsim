@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -31,8 +32,8 @@ type ChainServer struct {
 // flag, and each actor can connect to the spawned btcd process.
 var defaultChainServer = ChainServer{
 	connect: "localhost:18556", // local simnet btcd
-	user:    "michalis",
-	pass:    "kbxkwb",
+	user:    "rpcuser",
+	pass:    "rpcpass",
 }
 
 type btcdCmdArgs struct {
@@ -53,8 +54,10 @@ func (p *btcdCmdArgs) args() []string {
 }
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
 	var wg sync.WaitGroup
-	actors := make([]*Actor, 0, actorsAmount) // Set cap to expected num of actors run
+	actors := make([]*Actor, 0, actorsAmount)
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
 	cert, err := ioutil.ReadFile(filepath.Join(btcdHomeDir, "rpc.cert"))
