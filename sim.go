@@ -103,7 +103,7 @@ func main() {
 	// Create actors.
 	for i := 0; i < actorsAmount; i++ {
 		// The way of assigning ports should definitely be reconsidered.
-		a, err := NewActor(&defaultChainServer, uint16(18554+(3*i)))
+		a, err := NewActor(&defaultChainServer, uint16(18557+i))
 		if err != nil {
 			log.Fatalf("Cannot create actor: %v", err)
 		}
@@ -133,5 +133,4 @@ func main() {
 		}(a)
 	}
 	wg.Wait()
-	close(connected)
 }

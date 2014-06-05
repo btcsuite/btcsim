@@ -18,7 +18,6 @@ import (
 
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
-	//"github.com/conformal/btcwire"
 )
 
 // These constants define the strings used for actor's authentication and
@@ -179,7 +178,8 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 	for i := range addressSpace {
 		addr, err := client.GetNewAddress()
 		if err != nil {
-			log.Fatalf("Cannot create address #%d: %v", i+1, err)
+			log.Printf("%s: Cannot create address #%d", "localhost:"+a.args.port, i+1)
+			return err
 		}
 		addressSpace[i] = addr
 	}
@@ -190,10 +190,11 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 	// should change once we move to use of many actors.
 	balance, err := a.client.GetBalanceMinConf("", 0)
 	if err != nil {
-		log.Fatalf("Cannot see account balance: %v", err)
+		log.Printf("%s: Cannot see account balance!", "localhost:"+a.args.port)
+		return err
 	}
 	if balance <= 0 {
-		log.Println("Insufficient funds! Exiting...")
+		log.Printf("%s: Insufficient funds!", "localhost:"+a.args.port)
 		return nil
 	}
 
