@@ -9,9 +9,9 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -20,13 +20,37 @@ import (
 	"github.com/conformal/btcutil"
 )
 
-// ChainServer describes the arguments necessary to connect a btcwallet
-// instance to a btcd websocket RPC server.
-type ChainServer struct {
-	connect string
-	user    string
-	pass    string
-}
+// These constants define the strings used for actor's authentication and
+// wallet encryption.  They are not needed to be secure, and are shared
+// between all actors.
+const (
+	actorWalletPassphrase = "walletpass"
+	actorRPCUser          = "rpcuser"
+	actorRPCPass          = "rpcpass"
+
+	// Number of addresses in a wallet
+	addressNum = 1000
+	// Allowed transactions per second
+	txPerSec = 3
+	// Number of actors
+	actorsAmount = 1
+)
+
+var (
+	once         sync.Once
+	connected    = make(chan struct{}, actorsAmount)
+	ntfnHandlers = rpc.NotificationHandlers{
+		OnBtcdConnected: func(conn bool) {
+			if conn {
+				once.Do(func() {
+					for i := 0; i < actorsAmount; i++ {
+						connected <- struct{}{}
+					}
+				})
+			}
+		},
+	}
+)
 
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
@@ -41,15 +65,6 @@ type Actor struct {
 	wg   sync.WaitGroup
 }
 
-// These constants define the strings used for actor's authentication and
-// wallet encryption.  They are not needed to be secure, and are shared
-// between all actors.
-const (
-	actorWalletPassphrase = "banana"
-	actorRPCUser          = "potato"
-	actorRPCPass          = "carrot"
-)
-
 // NewActor creates a new actor which runs its own wallet process connecting
 // to the btcd chain server specified by chain, and listening for simulator
 // websocket connections on the specified port.
@@ -57,16 +72,6 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 	// Please don't run this as root.
 	if port < 1024 {
 		return nil, errors.New("invalid actor port")
-	}
-
-	// TODO: probably a better idea to write a single keypair and each
-	// actor (and btcd) can reference it with the --rpccert and --rpckey
-	// options.  Switch to that when we start spawning our own simnet
-	// btcd instances.
-	validUntil := time.Now().Add(10 * 365 * 24 * time.Hour)
-	cert, key, err := btcutil.NewTLSCertPair("actor", validUntil, nil)
-	if err != nil {
-		return nil, err
 	}
 
 	dir, err := ioutil.TempDir("", "actor")
@@ -79,8 +84,6 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 			chainSvr:         *chain,
 			dir:              dir,
 			port:             strconv.FormatUint(uint64(port), 10),
-			rpcCert:          cert,
-			rpcKey:           key,
 			rpcUser:          actorRPCUser,
 			rpcPass:          actorRPCPass,
 			walletPassphrase: actorWalletPassphrase,
@@ -108,10 +111,6 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return errors.New("actor command previously created")
 	}
 
-	if err := a.writeCertPair(); err != nil {
-		return err
-	}
-
 	// Create and start command in background.
 	a.cmd = a.args.Cmd()
 	a.cmd.Stdout = stderr
@@ -130,15 +129,16 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		Endpoint:     "frontend",
 		User:         a.args.rpcUser,
 		Pass:         a.args.rpcPass,
-		Certificates: a.args.rpcCert,
+		Certificates: a.args.chainSvr.cert,
 	}
+
 	// The RPC client will not wait for the RPC server to start up, so
 	// loop a few times and attempt additional connections, sleeping
 	// after each failure.
 	var client *rpc.Client
 	var connErr error
 	for i := 0; i < 5; i++ {
-		if client, connErr = rpc.New(&rpcConf, nil); connErr != nil {
+		if client, connErr = rpc.New(&rpcConf, &ntfnHandlers); connErr != nil {
 			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
 			continue
 		}
@@ -157,9 +157,11 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return connErr
 	}
 
+	// Wait for btcd to connect
+	<-connected
+
 	// Create the wallet.
-	err := a.client.CreateEncryptedWallet(a.args.walletPassphrase)
-	if err != nil {
+	if err := a.client.CreateEncryptedWallet(a.args.walletPassphrase); err != nil {
 		if err := a.cmd.Process.Kill(); err != nil {
 			log.Printf("Cannot kill wallet process after failed "+
 				"wallet creation: %v", err)
@@ -171,8 +173,37 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return err
 	}
 
-	// Start actor behavior goroutines.
-	a.wg.Add(0) // Increment for each goroutine run
+	// Create wallet addresses.
+	addressSpace := make([]btcutil.Address, addressNum)
+	for i := range addressSpace {
+		addr, err := client.GetNewAddress()
+		if err != nil {
+			log.Printf("%s: Cannot create address #%d", "localhost:"+a.args.port, i+1)
+			return err
+		}
+		addressSpace[i] = addr
+	}
+
+	// Start sending funds to the addresses the wallet already owns.
+	// At this point we are just going to iterate over our address slice
+	// without any use of concurrent primitives. Most of the following code
+	// should change once we move to use of many actors.
+	balance, err := a.client.GetBalanceMinConf("", 0)
+	if err != nil {
+		log.Printf("%s: Cannot see account balance!", "localhost:"+a.args.port)
+		return nil
+	}
+	if balance <= 0 {
+		log.Printf("%s: Insufficient funds!", "localhost:"+a.args.port)
+		return nil
+	}
+
+	// Tx per second
+	for _ = range time.Tick(time.Second) {
+		for i := 0; i < txPerSec; i++ {
+			a.client.SendFromMinConf("", addressSpace[rand.Int()%addressNum], balance/10, 0)
+		}
+	}
 
 	return nil
 }
@@ -193,30 +224,10 @@ func (a *Actor) Cleanup() error {
 	return os.RemoveAll(a.args.dir)
 }
 
-// writeCertPair writes the TLS certificate and key to the wallet process's
-// home directory.  It is necessary to generate certificates here rather than
-// letting the wallet auto generate them to prevent a race where we can't
-// establish an rpc client connection due to missing a missing cert file.
-//
-// It's assumed the actor directory already exists at this point (due to a call
-// to ioutil.TempDir).
-func (a *Actor) writeCertPair() error {
-	certPath := filepath.Join(a.args.dir, "rpc.cert")
-	keyPath := filepath.Join(a.args.dir, "rpc.key")
-
-	err := ioutil.WriteFile(certPath, a.args.rpcCert, 0666)
-	if err != nil {
-		return err
-	}
-	return ioutil.WriteFile(keyPath, a.args.rpcKey, 0600)
-}
-
 type procArgs struct {
 	chainSvr         ChainServer
 	dir              string
 	port             string
-	rpcCert          []byte
-	rpcKey           []byte
 	rpcUser          string
 	rpcPass          string
 	walletPassphrase string
@@ -228,12 +239,13 @@ func (p *procArgs) Cmd() *exec.Cmd {
 
 func (p *procArgs) args() []string {
 	return []string{
+		"--simnet",
 		"--datadir=" + p.dir,
 		"--username=" + p.rpcUser,
 		"--password=" + p.rpcPass,
 		"--rpcconnect=" + p.chainSvr.connect,
-		"--btcdusername=" + p.chainSvr.user,
-		"--btcdpassword=" + p.chainSvr.pass,
 		"--rpclisten=:" + p.port,
+		"--rpccert=" + p.chainSvr.certPath,
+		"--rpckey=" + p.chainSvr.keyPath,
 	}
 }
