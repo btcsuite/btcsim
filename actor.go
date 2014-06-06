@@ -18,6 +18,7 @@ import (
 
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
+	"github.com/conformal/btcwire"
 )
 
 // These constants define the strings used for actor's authentication and
@@ -30,26 +31,8 @@ const (
 
 	// Number of addresses in a wallet
 	addressNum = 1000
-	// Allowed transactions per second
-	txPerSec = 3
 	// Number of actors
 	actorsAmount = 1
-)
-
-var (
-	once         sync.Once
-	connected    = make(chan struct{}, actorsAmount)
-	ntfnHandlers = rpc.NotificationHandlers{
-		OnBtcdConnected: func(conn bool) {
-			if conn {
-				once.Do(func() {
-					for i := 0; i < actorsAmount; i++ {
-						connected <- struct{}{}
-					}
-				})
-			}
-		},
-	}
 )
 
 // Actor describes an actor on the simulation network.  Each actor runs
@@ -58,11 +41,8 @@ type Actor struct {
 	args   procArgs
 	cmd    *exec.Cmd
 	client *rpc.Client
-
-	// Parameters specifying how actor behaves should be included here.
-
-	quit chan struct{}
-	wg   sync.WaitGroup
+	quit   chan struct{}
+	wg     sync.WaitGroup
 }
 
 // NewActor creates a new actor which runs its own wallet process connecting
@@ -105,11 +85,20 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 // If the RPC client connction cannot be established or wallet cannot
 // be created, the wallet process is killed and the actor directory
 // removed.
-func (a *Actor) Start(stderr, stdout io.Writer) error {
+func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
 		return errors.New("actor command previously created")
 	}
+
+	balanceUpdate := make(chan btcutil.Amount, 1)
+	connected := make(chan struct{})
+	var firstConn bool
+	var startingHeight int32
+	const timeoutSecs int64 = 3600 * 24
+	// blocksConnected defines how many blocks have to connect to the blockchain
+	// before the simulation normally stop.
+	const blocksConnected int32 = 50000
 
 	// Create and start command in background.
 	a.cmd = a.args.Cmd()
@@ -130,6 +119,33 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		User:         a.args.rpcUser,
 		Pass:         a.args.rpcPass,
 		Certificates: a.args.chainSvr.cert,
+	}
+
+	ntfnHandlers := rpc.NotificationHandlers{
+		OnBtcdConnected: func(conn bool) {
+			if conn && !firstConn {
+				firstConn = true
+				connected <- struct{}{}
+			}
+		},
+		// When a block (specified by the difference between current height and startingHeight) connects
+		// to the chain after actors have started, send a signal to stop actors. This is used so main
+		// can break from select and call a.Stop to stop actors.
+		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
+			if height-startingHeight > blocksConnected {
+				com.stop <- struct{}{}
+			}
+		},
+		// Update on every round bitcoin value.
+		OnAccountBalance: func(account string, balance btcutil.Amount, confirmed bool) {
+			if balance%1 == 0 && len(balanceUpdate) == 0 {
+				balanceUpdate <- balance
+			} else if balance%1 == 0 {
+				// Discard previous update
+				<-balanceUpdate
+				balanceUpdate <- balance
+			}
+		},
 	}
 
 	// The RPC client will not wait for the RPC server to start up, so
@@ -173,35 +189,38 @@ func (a *Actor) Start(stderr, stdout io.Writer) error {
 		return err
 	}
 
-	// Create wallet addresses.
+	// Create wallet addresses and unlock wallet.
 	addressSpace := make([]btcutil.Address, addressNum)
 	for i := range addressSpace {
 		addr, err := client.GetNewAddress()
 		if err != nil {
-			log.Printf("%s: Cannot create address #%d", "localhost:"+a.args.port, i+1)
+			log.Printf("%s: Cannot create address #%d", rpcConf.Host, i+1)
 			return err
 		}
 		addressSpace[i] = addr
 	}
+	a.client.WalletPassphrase(actorWalletPassphrase, timeoutSecs)
 
-	// Start sending funds to the addresses the wallet already owns.
-	// At this point we are just going to iterate over our address slice
-	// without any use of concurrent primitives. Most of the following code
-	// should change once we move to use of many actors.
-	balance, err := a.client.GetBalanceMinConf("", 0)
-	if err != nil {
-		log.Printf("%s: Cannot see account balance!", "localhost:"+a.args.port)
-		return nil
-	}
-	if balance <= 0 {
-		log.Printf("%s: Insufficient funds!", "localhost:"+a.args.port)
-		return nil
+	// Check for current block height.
+	_, startingHeight, _ = a.client.GetBestBlock()
+
+	// Register for block notifications.
+	if err := client.NotifyBlocks(); err != nil {
+		log.Printf("%s: Cannot register for block notifications: %v", rpcConf.Host, err)
 	}
 
-	// Tx per second
-	for _ = range time.Tick(time.Second) {
-		for i := 0; i < txPerSec; i++ {
-			a.client.SendFromMinConf("", addressSpace[rand.Int()%addressNum], balance/10, 0)
+	// TODO: Start mining here
+
+out:
+	for {
+		select {
+		case com.upstream <- addressSpace[rand.Int()%addressNum]:
+			log.Printf("%s: Sending address to upstream", rpcConf.Host)
+		case addr := <-com.downstream:
+			log.Printf("%s: Sending to %v", rpcConf.Host, addr)
+			// TODO: send tx over received addr
+		case <-a.quit:
+			break out
 		}
 	}
 

@@ -5,15 +5,17 @@
 package main
 
 import (
-	"github.com/conformal/btcutil"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/conformal/btcutil"
 )
 
 // ChainServer describes the arguments necessary to connect a btcwallet
@@ -53,19 +55,31 @@ func (p *btcdCmdArgs) args() []string {
 	}
 }
 
+// Communication is consisted of the necessary primitives used
+// for communication between the main goroutine and actors.
+type Communication struct {
+	upstream   chan btcutil.Address
+	downstream chan btcutil.Address
+	stop       chan struct{}
+}
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
+	rand.Seed(int64(time.Now().Nanosecond()))
 
 	var wg sync.WaitGroup
 	actors := make([]*Actor, 0, actorsAmount)
+	com := Communication{
+		upstream:   make(chan btcutil.Address, actorsAmount),
+		downstream: make(chan btcutil.Address, actorsAmount),
+		stop:       make(chan struct{}, actorsAmount),
+	}
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
 	cert, err := ioutil.ReadFile(filepath.Join(btcdHomeDir, "rpc.cert"))
 	if err != nil {
 		log.Fatalf("Cannot read certificate: %v", err)
 	}
-	// Don't change the following assignments to a composite literal since defaultChainServer's
-	// already initialized fields will be re-initialized to their zero values.
 	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
 	defaultChainServer.keyPath = filepath.Join(btcdHomeDir, "rpc.key")
 	defaultChainServer.cert = cert
@@ -102,34 +116,50 @@ func main() {
 
 	// Create actors.
 	for i := 0; i < actorsAmount; i++ {
-		// The way of assigning ports should definitely be reconsidered.
 		a, err := NewActor(&defaultChainServer, uint16(18557+i))
 		if err != nil {
-			log.Fatalf("Cannot create actor: %v", err)
+			log.Printf("Cannot create actor on %s: %v", "localhost:"+a.args.port, err)
+			continue
 		}
 		actors = append(actors, a)
 	}
 
-	// Start and run for a few seconds.
+	// Start actors.
+	for _, a := range actors {
+		go func(a *Actor, com Communication) {
+			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
+				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
+				// TODO: reslice actors when one actor cannot start
+			}
+		}(a, com)
+	}
+
+out:
+	for {
+		select {
+		case addr := <-com.upstream:
+			com.downstream <- addr
+		case <-com.stop:
+			break out
+		}
+	}
+
+	log.Println("Time to die")
+
+	// Shutdown actors.
 	for _, a := range actors {
 		wg.Add(1)
 		go func(a *Actor) {
 			defer wg.Done()
-			if err := a.Start(os.Stderr, os.Stdout); err != nil {
-				log.Fatalf("Cannot start actor: %v", err)
-			}
-
-			log.Println("Running actor for a few seconds")
-			time.Sleep(3 * time.Second)
-			log.Println("Time to die")
-
 			if err := a.Stop(); err != nil {
-				log.Fatalf("Cannot stop actor: %v", err)
+				log.Printf("Cannot stop actor on %s: %v", "localhost:"+a.args.port, err)
+				return
 			}
 			if err := a.Cleanup(); err != nil {
-				log.Fatalf("Cannot cleanup actor directory: %v", err)
+				log.Printf("Cannot cleanup actor on %s directory: %v", "localhost:"+a.args.port, err)
+				return
 			}
-			log.Println("Actor shutdown successfully")
+			log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
 		}(a)
 	}
 	wg.Wait()
