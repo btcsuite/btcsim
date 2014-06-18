@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
 )
 
@@ -38,23 +39,6 @@ var defaultChainServer = ChainServer{
 	pass:    "rpcpass",
 }
 
-type btcdCmdArgs struct {
-	rpcUser string
-	rpcPass string
-	rpcCert string
-	rpcKey  string
-}
-
-func (p *btcdCmdArgs) args() []string {
-	return []string{
-		"--simnet",
-		"-u" + p.rpcUser,
-		"-P" + p.rpcPass,
-		"--rpccert=" + p.rpcCert,
-		"--rpckey=" + p.rpcKey,
-	}
-}
-
 // Communication is consisted of the necessary primitives used
 // for communication between the main goroutine and actors.
 type Communication struct {
@@ -63,11 +47,15 @@ type Communication struct {
 	stop       chan struct{}
 }
 
+const connRetry = 15
+
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	rand.Seed(int64(time.Now().Nanosecond()))
 
 	var wg sync.WaitGroup
+	// Number of actors
+	var actorsAmount = 1
 	actors := make([]*Actor, 0, actorsAmount)
 	com := Communication{
 		upstream:   make(chan btcutil.Address, actorsAmount),
@@ -76,24 +64,50 @@ func main() {
 	}
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
-	cert, err := ioutil.ReadFile(filepath.Join(btcdHomeDir, "rpc.cert"))
+	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
+	defaultChainServer.keyPath = filepath.Join(btcdHomeDir, "rpc.key")
+	cert, err := ioutil.ReadFile(defaultChainServer.certPath)
 	if err != nil {
 		log.Fatalf("Cannot read certificate: %v", err)
 	}
-	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
-	defaultChainServer.keyPath = filepath.Join(btcdHomeDir, "rpc.key")
 	defaultChainServer.cert = cert
 
-	cmdArgs := &btcdCmdArgs{
-		rpcUser: defaultChainServer.user,
-		rpcPass: defaultChainServer.pass,
-		rpcCert: defaultChainServer.certPath,
-		rpcKey:  defaultChainServer.keyPath,
+	btcdArgs := []string{
+		"--simnet",
+		"-u" + defaultChainServer.user,
+		"-P" + defaultChainServer.pass,
+		"--rpccert=" + defaultChainServer.certPath,
+		"--rpckey=" + defaultChainServer.keyPath,
+		"--profile=",
 	}
 
 	log.Println("Starting btcd on simnet...")
-	if err := exec.Command("btcd", cmdArgs.args()...).Start(); err != nil {
+	btcd := exec.Command("btcd", btcdArgs...)
+	if err := btcd.Start(); err != nil {
 		log.Fatalf("Couldn't start btcd: %v", err)
+	}
+
+	// Create and start RPC client.
+	rpcConf := rpc.ConnConfig{
+		Host:         defaultChainServer.connect,
+		Endpoint:     "ws",
+		User:         defaultChainServer.user,
+		Pass:         defaultChainServer.pass,
+		Certificates: defaultChainServer.cert,
+	}
+
+	var client *rpc.Client
+	for i := 0; i < connRetry; i++ {
+		if client, err = rpc.New(&rpcConf, nil); err != nil {
+			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
+			continue
+		}
+		break
+	}
+	if client == nil {
+		log.Printf("Cannot start btcd rpc client: %v", err)
+		Kill(actors, btcd, wg)
+		return
 	}
 
 	// If we panic somewhere, at least try to stop the spawned wallet
@@ -134,6 +148,25 @@ func main() {
 		}(a, com)
 	}
 
+	addressTable := make([]btcutil.Address, actorsAmount)
+	for i := 0; i < actorsAmount; i++ {
+		addressTable[i] = <-com.upstream
+	}
+
+	// Start mining.
+	miner, err := NewMiner(addressTable, com.stop)
+	if err != nil && miner == nil { // Miner didn't start at all
+		Kill(actors, btcd, wg)
+		return
+	} else if err != nil && miner != nil { // Miner started so we have to shut it down
+		miner.Shutdown()
+		Kill(actors, btcd, wg)
+		return
+	}
+
+	// Add mining btcd listen interface as a node
+	client.AddNode("localhost:18550", rpc.ANAdd)
+
 out:
 	for {
 		select {
@@ -144,9 +177,23 @@ out:
 		}
 	}
 
-	log.Println("Time to die")
+	// TODO: Collect statistics from the blockchain
 
-	// Shutdown actors.
+	log.Println("Time to die")
+	// Shutdown miner.
+	miner.Shutdown()
+	// Kill actors and initial btcd instance.
+	Kill(actors, btcd, wg)
+}
+
+// Kill shuts down actors and the initial btcd process.
+func Kill(actors []*Actor, btcd *exec.Cmd, wg sync.WaitGroup) {
+	// Kill initial btcd instance.
+	if err := btcd.Process.Kill(); err != nil {
+		log.Printf("Cannot kill initial btcd process: %v", err)
+	}
+	btcd.Wait()
+
 	for _, a := range actors {
 		wg.Add(1)
 		go func(a *Actor) {
@@ -163,4 +210,5 @@ out:
 		}(a)
 	}
 	wg.Wait()
+
 }

@@ -13,36 +13,23 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"sync"
 	"time"
 
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
-	"github.com/conformal/btcwire"
-)
-
-// These constants define the strings used for actor's authentication and
-// wallet encryption.  They are not needed to be secure, and are shared
-// between all actors.
-const (
-	actorWalletPassphrase = "walletpass"
-	actorRPCUser          = "rpcuser"
-	actorRPCPass          = "rpcpass"
-
-	// Number of addresses in a wallet
-	addressNum = 1000
-	// Number of actors
-	actorsAmount = 1
 )
 
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
 type Actor struct {
-	args   procArgs
-	cmd    *exec.Cmd
-	client *rpc.Client
-	quit   chan struct{}
-	wg     sync.WaitGroup
+	args       procArgs
+	cmd        *exec.Cmd
+	client     *rpc.Client
+	addressNum int
+	downstream chan btcutil.Address
+	upstream   chan btcutil.Address
+	stop       chan struct{}
+	quit       chan struct{}
 }
 
 // NewActor creates a new actor which runs its own wallet process connecting
@@ -64,11 +51,10 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 			chainSvr:         *chain,
 			dir:              dir,
 			port:             strconv.FormatUint(uint64(port), 10),
-			rpcUser:          actorRPCUser,
-			rpcPass:          actorRPCPass,
-			walletPassphrase: actorWalletPassphrase,
+			walletPassphrase: "walletpass",
 		},
-		quit: make(chan struct{}),
+		addressNum: 1000,
+		quit:       make(chan struct{}),
 	}
 	return &a, nil
 }
@@ -94,11 +80,11 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	balanceUpdate := make(chan btcutil.Amount, 1)
 	connected := make(chan struct{})
 	var firstConn bool
-	var startingHeight int32
 	const timeoutSecs int64 = 3600 * 24
-	// blocksConnected defines how many blocks have to connect to the blockchain
-	// before the simulation normally stop.
-	const blocksConnected int32 = 50000
+
+	a.downstream = com.downstream
+	a.upstream = com.upstream
+	a.stop = com.stop
 
 	// Create and start command in background.
 	a.cmd = a.args.Cmd()
@@ -115,9 +101,9 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	// Create and start RPC client.
 	rpcConf := rpc.ConnConfig{
 		Host:         "localhost:" + a.args.port,
-		Endpoint:     "frontend",
-		User:         a.args.rpcUser,
-		Pass:         a.args.rpcPass,
+		Endpoint:     "ws",
+		User:         a.args.chainSvr.user,
+		Pass:         a.args.chainSvr.pass,
 		Certificates: a.args.chainSvr.cert,
 	}
 
@@ -126,14 +112,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 			if conn && !firstConn {
 				firstConn = true
 				connected <- struct{}{}
-			}
-		},
-		// When a block (specified by the difference between current height and startingHeight) connects
-		// to the chain after actors have started, send a signal to stop actors. This is used so main
-		// can break from select and call a.Stop to stop actors.
-		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
-			if height-startingHeight > blocksConnected {
-				com.stop <- struct{}{}
 			}
 		},
 		// Update on every round bitcoin value.
@@ -153,7 +131,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	// after each failure.
 	var client *rpc.Client
 	var connErr error
-	for i := 0; i < 5; i++ {
+	for i := 0; i < connRetry; i++ {
 		if client, connErr = rpc.New(&rpcConf, &ntfnHandlers); connErr != nil {
 			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
 			continue
@@ -190,7 +168,8 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	}
 
 	// Create wallet addresses and unlock wallet.
-	addressSpace := make([]btcutil.Address, addressNum)
+	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
+	addressSpace := make([]btcutil.Address, a.addressNum)
 	for i := range addressSpace {
 		addr, err := client.GetNewAddress()
 		if err != nil {
@@ -199,26 +178,37 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		}
 		addressSpace[i] = addr
 	}
-	a.client.WalletPassphrase(actorWalletPassphrase, timeoutSecs)
-
-	// Check for current block height.
-	_, startingHeight, _ = a.client.GetBestBlock()
-
-	// Register for block notifications.
-	if err := client.NotifyBlocks(); err != nil {
-		log.Printf("%s: Cannot register for block notifications: %v", rpcConf.Host, err)
+	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
+		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
+		return nil
 	}
 
-	// TODO: Start mining here
+	// TODO: Probably add OnRescanFinished notification and make it sync here
+
+	// Send a random address upstream that will be used by the cpu miner.
+	a.upstream <- addressSpace[rand.Int()%a.addressNum]
+
+	// Receive from downstream (ie. start spending funds) only after coinbase matures
+	a.downstream = nil
+	var balance btcutil.Amount
 
 out:
 	for {
 		select {
-		case com.upstream <- addressSpace[rand.Int()%addressNum]:
-			log.Printf("%s: Sending address to upstream", rpcConf.Host)
-		case addr := <-com.downstream:
-			log.Printf("%s: Sending to %v", rpcConf.Host, addr)
-			// TODO: send tx over received addr
+		case a.upstream <- addressSpace[rand.Int()%a.addressNum]:
+		case addr := <-a.downstream:
+			// TODO: Probably handle following error better
+			if _, err := a.client.SendFromMinConf("", addr, 1, 0); err != nil {
+				log.Printf("%s: Cannot proceed with latest transaction: %v", rpcConf.Host, err)
+			}
+		case balance = <-balanceUpdate:
+			// Start sending funds
+			if balance > 100 && a.downstream == nil {
+				a.downstream = com.downstream
+				// else block downstream (ie. stop spending funds)
+			} else if balance == 0 && a.downstream != nil {
+				a.downstream = nil
+			}
 		case <-a.quit:
 			break out
 		}
@@ -233,8 +223,8 @@ func (a *Actor) Stop() (err error) {
 	if killErr := a.cmd.Process.Kill(); killErr != nil {
 		err = killErr
 	}
+	a.cmd.Wait()
 	close(a.quit)
-	a.wg.Wait()
 	return
 }
 
@@ -247,8 +237,6 @@ type procArgs struct {
 	chainSvr         ChainServer
 	dir              string
 	port             string
-	rpcUser          string
-	rpcPass          string
 	walletPassphrase string
 }
 
@@ -260,8 +248,8 @@ func (p *procArgs) args() []string {
 	return []string{
 		"--simnet",
 		"--datadir=" + p.dir,
-		"--username=" + p.rpcUser,
-		"--password=" + p.rpcPass,
+		"--username=" + p.chainSvr.user,
+		"--password=" + p.chainSvr.pass,
 		"--rpcconnect=" + p.chainSvr.connect,
 		"--rpclisten=:" + p.port,
 		"--rpccert=" + p.chainSvr.certPath,
