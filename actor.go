@@ -77,6 +77,8 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		return errors.New("actor command previously created")
 	}
 
+	spendAfter := make(chan struct{})
+	start := true
 	balanceUpdate := make(chan btcutil.Amount, 1)
 	connected := make(chan struct{})
 	var firstConn bool
@@ -88,8 +90,8 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 
 	// Create and start command in background.
 	a.cmd = a.args.Cmd()
-	a.cmd.Stdout = stderr
-	a.cmd.Stderr = stdout
+	a.cmd.Stdout = stdout
+	a.cmd.Stderr = stderr
 	if err := a.cmd.Start(); err != nil {
 		if err := a.Cleanup(); err != nil {
 			log.Printf("Cannot remove actor directory after "+
@@ -116,6 +118,12 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		},
 		// Update on every round bitcoin value.
 		OnAccountBalance: func(account string, balance btcutil.Amount, confirmed bool) {
+			// Block actors at start until coinbase matures (equals or is more than 50 BTC).
+			if balance >= 50*1e8 && start {
+				spendAfter <- struct{}{}
+				log.Println("Start spending funds")
+				start = false
+			}
 			if balance%1 == 0 && len(balanceUpdate) == 0 {
 				balanceUpdate <- balance
 			} else if balance%1 == 0 {
@@ -180,30 +188,36 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	}
 	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
 		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
-		return nil
+		return err
 	}
-
-	// TODO: Probably add OnRescanFinished notification and make it sync here
 
 	// Send a random address upstream that will be used by the cpu miner.
 	a.upstream <- addressSpace[rand.Int()%a.addressNum]
 
-	// Receive from downstream (ie. start spending funds) only after coinbase matures
-	a.downstream = nil
-	var balance btcutil.Amount
+	// Wait for matured coinbase
+	<-spendAfter
+	balance, _ := a.client.GetBalance("") //<-balanceUpdate
+
+	// Sending amount at 50 BTC
+	var amount btcutil.Amount = 50 * 1e8
 
 out:
 	for {
 		select {
 		case a.upstream <- addressSpace[rand.Int()%a.addressNum]:
+			// Send address to upstream to request receiving a transaction.
 		case addr := <-a.downstream:
-			// TODO: Probably handle following error better
-			if _, err := a.client.SendFromMinConf("", addr, 1, 0); err != nil {
+			// Receive address from downstream to send a transaction to.
+
+			if _, err := a.client.SendFromMinConf("", addr, amount, 0); err != nil {
 				log.Printf("%s: Cannot proceed with latest transaction: %v", rpcConf.Host, err)
 			}
+
 		case balance = <-balanceUpdate:
+			//Use getbalance until races in notifications get fixed.
+			balance, _ = a.client.GetBalance("")
 			// Start sending funds
-			if balance > 100 && a.downstream == nil {
+			if balance > 50*1e8 && a.downstream == nil {
 				a.downstream = com.downstream
 				// else block downstream (ie. stop spending funds)
 			} else if balance == 0 && a.downstream != nil {
@@ -246,6 +260,7 @@ func (p *procArgs) Cmd() *exec.Cmd {
 
 func (p *procArgs) args() []string {
 	return []string{
+		"-d" + "TXST=warn",
 		"--simnet",
 		"--datadir=" + p.dir,
 		"--username=" + p.chainSvr.user,
