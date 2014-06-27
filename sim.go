@@ -53,8 +53,8 @@ func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	rand.Seed(int64(time.Now().Nanosecond()))
 
-	var wg sync.WaitGroup
 	// Number of actors
+	var wg sync.WaitGroup
 	var actorsAmount = 1
 	actors := make([]*Actor, 0, actorsAmount)
 	com := Communication{
@@ -106,29 +106,12 @@ func main() {
 	}
 	if client == nil {
 		log.Printf("Cannot start btcd rpc client: %v", err)
-		Kill(actors, btcd, wg)
+		if err := Exit(btcd); err != nil {
+			log.Printf("Cannot kill initial btcd process: %v", err)
+		}
 		return
 	}
 
-	// If we panic somewhere, at least try to stop the spawned wallet
-	// processes.
-	defer func() {
-		if r := recover(); r != nil {
-			log.Println("Panic! Shuting down actors...")
-			for _, a := range actors {
-				func() {
-					// Ignore any other panics that may
-					// occur during panic handling.
-					defer recover()
-					a.Stop()
-					a.Cleanup()
-				}()
-			}
-			panic(r)
-		}
-	}()
-
-	// Create actors.
 	for i := 0; i < actorsAmount; i++ {
 		a, err := NewActor(&defaultChainServer, uint16(18557+i))
 		if err != nil {
@@ -138,31 +121,63 @@ func main() {
 		actors = append(actors, a)
 	}
 
+	// chan to wait for interrupt handler to finish
+	exit := make(chan struct{})
+	// close actors and exit btcd on interrupt
+	addInterruptHandler(func() {
+		Close(actors, &wg)
+		if err := Exit(btcd); err != nil {
+			log.Printf("Cannot kill initial btcd process: %v", err)
+		}
+		exit <- struct{}{}
+	})
+
 	// Start actors.
 	for _, a := range actors {
+		wg.Add(1)
 		go func(a *Actor, com Communication) {
 			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
 				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
 				// TODO: reslice actors when one actor cannot start
 			}
+			wg.Done()
 		}(a, com)
 	}
 
 	addressTable := make([]btcutil.Address, actorsAmount)
-	for i := 0; i < actorsAmount; i++ {
-		addressTable[i] = <-com.upstream
+	for i, a := range actors {
+		select {
+		case addressTable[i] = <-com.upstream:
+		case <-a.quit:
+			// received an interrupt when addresses were being
+			// generated. can't continue simulation without addresses
+			<-exit
+			return
+		}
+	}
+
+	currentBlock, err := client.GetBlockCount()
+	if err != nil {
+		log.Printf("Cannot get block count: %v", err)
 	}
 
 	// Start mining.
-	miner, err := NewMiner(addressTable, com.stop)
-	if err != nil && miner == nil { // Miner didn't start at all
-		Kill(actors, btcd, wg)
-		return
-	} else if err != nil && miner != nil { // Miner started so we have to shut it down
-		miner.Shutdown()
-		Kill(actors, btcd, wg)
+	miner, err := NewMiner(addressTable, com.stop, int32(currentBlock))
+	if err != nil {
+		Close(actors, &wg)
+		if miner != nil { // Miner started so we have to shut it down
+			miner.Shutdown()
+		}
+		if err := Exit(btcd); err != nil {
+			log.Printf("Cannot kill initial btcd process: %v", err)
+		}
 		return
 	}
+
+	// cleanup the miner on interrupt
+	addInterruptHandler(func() {
+		miner.Shutdown()
+	})
 
 	// Add mining btcd listen interface as a node
 	client.AddNode("localhost:18550", rpc.ANAdd)
@@ -171,44 +186,60 @@ out:
 	for {
 		select {
 		case addr := <-com.upstream:
-			com.downstream <- addr
+			select {
+			case com.downstream <- addr:
+			case <-com.stop:
+				break out
+			}
 		case <-com.stop:
 			break out
 		}
 	}
 
+	// Stop mining unless the miner is already closed
+	if !miner.closed {
+		if err := miner.client.SetGenerate(true, 0); err != nil {
+			log.Printf("Cannot set miner not to generate coins: %v", err)
+		}
+	}
+
 	// TODO: Collect statistics from the blockchain
 
-	log.Println("Time to die")
-	// Shutdown miner.
-	miner.Shutdown()
-	// Kill actors and initial btcd instance.
-	Kill(actors, btcd, wg)
-}
+	// wait for interrupt handlers to finish
+	time.Sleep(50 * time.Millisecond)
 
-// Kill shuts down actors and the initial btcd process.
-func Kill(actors []*Actor, btcd *exec.Cmd, wg sync.WaitGroup) {
-	// Kill initial btcd instance.
-	if err := btcd.Process.Kill(); err != nil {
+	Close(actors, &wg)
+	miner.Shutdown()
+	if err := Exit(btcd); err != nil {
 		log.Printf("Cannot kill initial btcd process: %v", err)
 	}
-	btcd.Wait()
+}
 
-	for _, a := range actors {
-		wg.Add(1)
-		go func(a *Actor) {
-			defer wg.Done()
-			if err := a.Stop(); err != nil {
-				log.Printf("Cannot stop actor on %s: %v", "localhost:"+a.args.port, err)
-				return
-			}
-			if err := a.Cleanup(); err != nil {
-				log.Printf("Cannot cleanup actor on %s directory: %v", "localhost:"+a.args.port, err)
-				return
-			}
-			log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
-		}(a)
+// Exit closes the cmd by passing SIGINT
+// workaround for windows by passing SIGKILL
+func Exit(cmd *exec.Cmd) (err error) {
+	defer cmd.Wait()
+
+	if runtime.GOOS == "windows" {
+		err = cmd.Process.Signal(os.Kill)
+	} else {
+		err = cmd.Process.Signal(os.Interrupt)
 	}
-	wg.Wait()
 
+	return
+}
+
+// Close sends close signal to actors and waits for
+// all actors to shutdown
+func Close(actors []*Actor, wg *sync.WaitGroup) {
+	for _, a := range actors {
+		a.Stop()
+		a.WaitForShutdown()
+	}
+	// shutdown only after all actors have stopped
+	for _, a := range actors {
+		a.Shutdown()
+	}
+	// wait for actor goroutines to return
+	wg.Wait()
 }

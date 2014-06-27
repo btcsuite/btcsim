@@ -23,11 +23,12 @@ type Miner struct {
 	client  *rpc.Client
 	datadir string
 	logdir  string
+	closed  bool
 }
 
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
 // to control it.
-func NewMiner(addressTable []btcutil.Address, stop chan struct{}) (*Miner, error) {
+func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock int32) (*Miner, error) {
 
 	datadir, err := ioutil.TempDir("", "minerData")
 	if err != nil {
@@ -80,15 +81,14 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}) (*Miner, error
 	}
 
 	ntfnHandlers := rpc.NotificationHandlers{
-		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			log.Printf("Transaction accepted: Hash: %v, Amount: %v", hash, amount)
-		},
 		// When a block higher than blocksConnected connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
-			log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
-			if height > blocksConnected {
+			if height > currentBlock {
+				log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
+			}
+			if height == blocksConnected {
 				stop <- struct{}{}
 			}
 		},
@@ -116,10 +116,6 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}) (*Miner, error
 		log.Printf("Cannot register for block notifications: %v", err)
 		return miner, err
 	}
-	if err := miner.client.NotifyNewTransactions(false); err != nil {
-		log.Printf("Cannot register for NewTransaction notifications: %v", err)
-		return miner, err
-	}
 
 	log.Println("CPU mining started")
 	return miner, nil
@@ -128,20 +124,24 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}) (*Miner, error
 // Shutdown kills the mining btcd process and removes its data and
 // log directories.
 func (m *Miner) Shutdown() {
-	if err := m.cmd.Process.Kill(); err != nil {
-		log.Printf("Cannot kill mining btcd process: %v", err)
-		return
-	}
-	m.cmd.Wait()
+	if !m.closed {
+		if err := Exit(m.cmd); err != nil {
+			log.Printf("Cannot kill mining btcd process: %v", err)
+			return
+		}
 
-	if err := os.RemoveAll(m.datadir); err != nil {
-		log.Printf("Cannot remove mining btcd datadir: %v", err)
-		return
-	}
-	if err := os.RemoveAll(m.logdir); err != nil {
-		log.Printf("Cannot remove mining btcd logdir: %v", err)
-		return
-	}
+		if err := os.RemoveAll(m.datadir); err != nil {
+			log.Printf("Cannot remove mining btcd datadir: %v", err)
+			return
+		}
+		if err := os.RemoveAll(m.logdir); err != nil {
+			log.Printf("Cannot remove mining btcd logdir: %v", err)
+			return
+		}
 
-	log.Println("Miner shutdown successfully")
+		m.closed = true
+		log.Println("Miner shutdown successfully")
+	} else {
+		log.Println("Miner already shutdown")
+	}
 }
