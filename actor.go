@@ -30,7 +30,6 @@ type Actor struct {
 	upstream   chan btcutil.Address
 	stop       chan struct{}
 	quit       chan struct{}
-
 }
 
 // NewActor creates a new actor which runs its own wallet process connecting
@@ -125,11 +124,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 				balanceUpdate <- balance
 			}
 		},
-
-			
-		
-	   
-	   
 	}
 
 	// The RPC client will not wait for the RPC server to start up, so
@@ -188,11 +182,8 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
 		return nil
 	}
-	
-
 
 	// TODO: Probably add OnRescanFinished notification and make it sync here
-
 
 	// Send a random address upstream that will be used by the cpu miner.
 	a.upstream <- addressSpace[rand.Int()%a.addressNum]
@@ -242,23 +233,25 @@ func (a *Actor) Cleanup() error {
 	return os.RemoveAll(a.args.dir)
 }
 
-func (a *Actor) GetAddresses() map[string]string {
-	
+func (a *Actor) GetAddresses() []string {
+
 	data, err := a.client.GetAddressesByAccount("")
-	addressBook := make(map[string]string)
+	var addressBook = make([]string, len(data))
 
 	if err != nil {
-		log.Fatal("RPC Client Error: ", err)
+		log.Printf("GetAddressesByAccount RPC Error: %s", err)
+
 	} else {
-		for _, item := range data {
-			amount, _ := a.client.GetReceivedByAddress(item)
-			addressBook[item.String()] = amount.String()
+
+		for i, v := range data {
+			addressBook[i] = v.String()
+
 		}
+
 	}
+
 	return addressBook
 }
-	
-
 
 type procArgs struct {
 	chainSvr         ChainServer
