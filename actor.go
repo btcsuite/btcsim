@@ -124,9 +124,9 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 				log.Println("Start spending funds")
 				start = false
 			}
-			if balance%1 == 0 && len(balanceUpdate) == 0 {
+			if balance%1e8 == 0 && balance != 0 && len(balanceUpdate) == 0 {
 				balanceUpdate <- balance
-			} else if balance%1 == 0 {
+			} else if balance%1e8 == 0 && balance != 0 {
 				// Discard previous update
 				<-balanceUpdate
 				balanceUpdate <- balance
@@ -196,7 +196,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 
 	// Wait for matured coinbase
 	<-spendAfter
-	balance, _ := a.client.GetBalance("") //<-balanceUpdate
+	balance := <-balanceUpdate
 
 	// Sending amount at 50 BTC
 	var amount btcutil.Amount = 50 * 1e8
@@ -214,8 +214,7 @@ out:
 			}
 
 		case balance = <-balanceUpdate:
-			//Use getbalance until races in notifications get fixed.
-			balance, _ = a.client.GetBalance("")
+
 			// Start sending funds
 			if balance > 50*1e8 && a.downstream == nil {
 				a.downstream = com.downstream
