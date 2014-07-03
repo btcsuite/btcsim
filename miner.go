@@ -80,14 +80,13 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}) (*Miner, error
 	}
 
 	ntfnHandlers := rpc.NotificationHandlers{
-		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			log.Printf("Transaction accepted: Hash: %v, Amount: %v", hash, amount)
-		},
 		// When a block higher than blocksConnected connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
-			log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
+			if height < 14000 && height%1000 == 0 || height > 14000 {
+				log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
+			}
 			if height > blocksConnected {
 				stop <- struct{}{}
 			}
@@ -111,13 +110,9 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}) (*Miner, error
 	// Use just one core for mining.
 	miner.client.SetGenerate(true, 1)
 
-	// Register for block and NewTransaction notifications.
+	// Register for block notifications.
 	if err := miner.client.NotifyBlocks(); err != nil {
 		log.Printf("Cannot register for block notifications: %v", err)
-		return miner, err
-	}
-	if err := miner.client.NotifyNewTransactions(false); err != nil {
-		log.Printf("Cannot register for NewTransaction notifications: %v", err)
 		return miner, err
 	}
 
