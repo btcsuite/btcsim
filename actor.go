@@ -75,6 +75,7 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 // be created, the wallet process is killed and the actor directory
 // removed.
 func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
+	defer a.wg.Wait()
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
 		return errors.New("actor command previously created")
@@ -191,8 +192,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	case <-a.quit:
 		// If the simulation ends for any reason before the actor's coinbase
 		// matures, we don't want it to get stuck on spendAfter.
-		// signal simulator to break out txn loop
-		a.stop <- struct{}{}
 		return nil
 	}
 
@@ -207,12 +206,14 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 			case a.upstream <- addressSpace[rand.Int()%a.addressNum]:
 				// Send address to upstream to request receiving a transaction.
 			case <-a.quit:
-				// signal simulator to break out txn loop
-				a.stop <- struct{}{}
 				return
 			}
 		}
 	}()
+
+	// rpcSync is used for synchronization, so the last call to SendFromMinConf
+	// will happen before the call to ListTransactions.
+	rpcSync := make(chan struct{}, 1)
 
 	// Start a goroutine to send transactions.
 	a.wg.Add(1)
@@ -226,8 +227,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 					log.Printf("Cannot send transaction: %v", err)
 				}
 			case <-a.quit:
-				// signal simulator to break out txn loop
-				a.stop <- struct{}{}
+				rpcSync <- struct{}{}
 				return
 			}
 		}
@@ -250,6 +250,19 @@ out:
 		}
 	}
 
+	<-rpcSync
+	txCount := 50
+	txn, err := a.client.ListTransactionsCount("", txCount)
+	if err != nil {
+		log.Printf("Actor on %s cannot list transactions: %v", rpcConf.Host, err)
+		return nil
+	}
+	if len(txn) == 0 {
+		log.Printf("Actor on %s doesn't have any transactions", rpcConf.Host)
+		return nil
+	}
+	com.txChan <- txn
+
 	return nil
 }
 
@@ -259,21 +272,15 @@ func (a *Actor) Stop() {
 	select {
 	case <-a.quit:
 	default:
-		a.client.Shutdown()
 		close(a.quit)
 	}
 }
 
-// WaitForShutdown waits until every goroutine inside an actor, including
-// the actor goroutine itself, has returned and kills the respective
-// btcwallet process.
-func (a *Actor) WaitForShutdown() {
-	a.wg.Wait()
-}
-
-// Shutdown kills the actor btcwallet process and removes its data directories.
+// Shutdown stops the rpc client, kills the actor btcwallet process
+// and removes its data directories.
 func (a *Actor) Shutdown() {
 	if !a.closed {
+		a.client.Shutdown()
 		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
 		if err := Exit(a.cmd); err != nil {
 			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
