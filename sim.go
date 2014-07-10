@@ -228,6 +228,11 @@ out:
 		}
 	}
 
+	if len(allTxn) == 0 {
+		// No info about transactions
+		return
+	}
+
 	txnBySec := make(map[time.Time]int)
 	for _, txn := range allTxn {
 		txnBySec[time.Unix(txn.TimeReceived, 0)]++
