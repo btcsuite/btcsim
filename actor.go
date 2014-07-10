@@ -292,6 +292,26 @@ func (a *Actor) Cleanup() error {
 	return os.RemoveAll(a.args.dir)
 }
 
+func (a *Actor) GetAddresses() []string {
+
+	data, err := a.client.GetAddressesByAccount("")
+	var addressBook = make([]string, len(data))
+
+	if err != nil {
+		log.Printf("GetAddressesByAccount RPC Error: %s", err)
+
+	} else {
+
+		for i, v := range data {
+			addressBook[i] = v.String()
+
+		}
+
+	}
+
+	return addressBook
+}
+
 type procArgs struct {
 	chainSvr         ChainServer
 	dir              string
