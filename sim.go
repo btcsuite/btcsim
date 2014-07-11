@@ -267,6 +267,7 @@ func Close(actors []*Actor, wg *sync.WaitGroup) {
 	for _, a := range actors {
 		a.Stop()
 	}
+	// wait for actor goroutines to return
 	wg.Wait()
 
 	// shutdown only after all actors have stopped
