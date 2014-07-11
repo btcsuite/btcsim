@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/conformal/btcjson"
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
 )
@@ -45,6 +46,7 @@ type Communication struct {
 	upstream   chan btcutil.Address
 	downstream chan btcutil.Address
 	stop       chan struct{}
+	txChan     chan []btcjson.ListTransactionsResult
 }
 
 const connRetry = 15
@@ -54,13 +56,14 @@ func main() {
 	rand.Seed(int64(time.Now().Nanosecond()))
 
 	// Number of actors
-	var wg sync.WaitGroup
 	var actorsAmount = 1
+	var wg sync.WaitGroup
 	actors := make([]*Actor, 0, actorsAmount)
 	com := Communication{
-		upstream:   make(chan btcutil.Address, actorsAmount),
-		downstream: make(chan btcutil.Address, actorsAmount),
+		upstream:   make(chan btcutil.Address, actorsAmount*10),
+		downstream: make(chan btcutil.Address, actorsAmount*10),
 		stop:       make(chan struct{}, actorsAmount),
+		txChan:     make(chan []btcjson.ListTransactionsResult, actorsAmount),
 	}
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
@@ -136,11 +139,11 @@ func main() {
 	for _, a := range actors {
 		wg.Add(1)
 		go func(a *Actor, com Communication) {
+			defer wg.Done()
 			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
 				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
 				// TODO: reslice actors when one actor cannot start
 			}
-			wg.Done()
 		}(a, com)
 	}
 
@@ -193,6 +196,8 @@ out:
 			}
 		case <-com.stop:
 			break out
+		case <-exit:
+			return
 		}
 	}
 
@@ -203,8 +208,6 @@ out:
 		}
 	}
 
-	// TODO: Collect statistics from the blockchain
-
 	// wait for interrupt handlers to finish
 	time.Sleep(50 * time.Millisecond)
 
@@ -213,6 +216,35 @@ out:
 	if err := Exit(btcd); err != nil {
 		log.Printf("Cannot kill initial btcd process: %v", err)
 	}
+
+	allTxn := make([]btcjson.ListTransactionsResult, 0)
+	for i := 0; i < actorsAmount; i++ {
+		// Make receiving from txChan non-blocking in case some actors won't
+		// send back any information about transactions.
+		select {
+		case txn := <-com.txChan:
+			allTxn = append(allTxn, txn...)
+		default:
+		}
+	}
+
+	if len(allTxn) == 0 {
+		// No info about transactions
+		return
+	}
+
+	txnBySec := make(map[time.Time]int)
+	for _, txn := range allTxn {
+		txnBySec[time.Unix(txn.TimeReceived, 0)]++
+
+	}
+
+	var tps int
+	for _, t := range txnBySec {
+		tps += t
+	}
+	tps /= len(txnBySec)
+	log.Printf("Average transactions per sec: %d", tps)
 }
 
 // Exit closes the cmd by passing SIGINT
@@ -234,12 +266,12 @@ func Exit(cmd *exec.Cmd) (err error) {
 func Close(actors []*Actor, wg *sync.WaitGroup) {
 	for _, a := range actors {
 		a.Stop()
-		a.WaitForShutdown()
 	}
+	// wait for actor goroutines to return
+	wg.Wait()
+
 	// shutdown only after all actors have stopped
 	for _, a := range actors {
 		a.Shutdown()
 	}
-	// wait for actor goroutines to return
-	wg.Wait()
 }
