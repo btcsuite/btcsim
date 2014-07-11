@@ -17,6 +17,7 @@ import (
 
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
+	"github.com/conformal/btcwire"
 )
 
 // ChainServer describes the arguments necessary to connect a btcwallet
@@ -54,9 +55,10 @@ func main() {
 	rand.Seed(int64(time.Now().Nanosecond()))
 
 	// Number of actors
-	var wg sync.WaitGroup
 	var actorsAmount = 1
 	actors := make([]*Actor, 0, actorsAmount)
+	var wg sync.WaitGroup
+	timeReceived := make(chan time.Time, actorsAmount)
 	com := Communication{
 		upstream:   make(chan btcutil.Address, actorsAmount),
 		downstream: make(chan btcutil.Address, actorsAmount),
@@ -96,9 +98,15 @@ func main() {
 		Certificates: defaultChainServer.cert,
 	}
 
+	ntfnHandlers := rpc.NotificationHandlers{
+		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
+			timeReceived <- time.Now()
+		},
+	}
+
 	var client *rpc.Client
 	for i := 0; i < connRetry; i++ {
-		if client, err = rpc.New(&rpcConf, nil); err != nil {
+		if client, err = rpc.New(&rpcConf, &ntfnHandlers); err != nil {
 			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
 			continue
 		}
@@ -106,6 +114,15 @@ func main() {
 	}
 	if client == nil {
 		log.Printf("Cannot start btcd rpc client: %v", err)
+		if err := Exit(btcd); err != nil {
+			log.Printf("Cannot kill initial btcd process: %v", err)
+		}
+		return
+	}
+
+	// Register for transaction notifications
+	if err := client.NotifyNewTransactions(false); err != nil {
+		log.Printf("Cannot register for transactions notifications: %v", err)
 		if err := Exit(btcd); err != nil {
 			log.Printf("Cannot kill initial btcd process: %v", err)
 		}
@@ -129,18 +146,18 @@ func main() {
 		if err := Exit(btcd); err != nil {
 			log.Printf("Cannot kill initial btcd process: %v", err)
 		}
-		exit <- struct{}{}
+		close(exit)
 	})
 
 	// Start actors.
 	for _, a := range actors {
 		wg.Add(1)
 		go func(a *Actor, com Communication) {
+			defer wg.Done()
 			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
 				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
 				// TODO: reslice actors when one actor cannot start
 			}
-			wg.Done()
 		}(a, com)
 	}
 
@@ -182,6 +199,34 @@ func main() {
 	// Add mining btcd listen interface as a node
 	client.AddNode("localhost:18550", rpc.ANAdd)
 
+	// tpsChan is used to deliver the average transactions per second
+	// of a simulation
+	tpsChan := make(chan float64, 1)
+	// Start a goroutine to receive transaction times
+	go func() {
+		var first, last time.Time
+		var txnCount int
+		firstTx := true
+
+		for {
+			select {
+			case last = <-timeReceived:
+				if firstTx {
+					first = last
+					firstTx = false
+				}
+				txnCount++
+			case <-com.stop:
+				diff := last.Sub(first)
+				tpsChan <- float64(txnCount) / diff.Seconds()
+				close(tpsChan)
+				return
+			case <-exit:
+				return
+			}
+		}
+	}()
+
 out:
 	for {
 		select {
@@ -192,7 +237,11 @@ out:
 				break out
 			}
 		case <-com.stop:
+			// Normal simulation exit
 			break out
+		case <-exit:
+			// Interrupt handler has finished so exit
+			return
 		}
 	}
 
@@ -203,15 +252,15 @@ out:
 		}
 	}
 
-	// TODO: Collect statistics from the blockchain
-
-	// wait for interrupt handlers to finish
-	time.Sleep(50 * time.Millisecond)
-
 	Close(actors, &wg)
 	miner.Shutdown()
 	if err := Exit(btcd); err != nil {
 		log.Printf("Cannot kill initial btcd process: %v", err)
+	}
+
+	tps, ok := <-tpsChan
+	if ok {
+		log.Printf("Average transactions per sec: %.2f", tps)
 	}
 }
 
@@ -229,17 +278,18 @@ func Exit(cmd *exec.Cmd) (err error) {
 	return
 }
 
-// Close sends close signal to actors and waits for
-// all actors to shutdown
+// Close sends close signal to actors, waits for actor goroutines
+// to exit and then shuts down all actors.
 func Close(actors []*Actor, wg *sync.WaitGroup) {
+	defer wg.Wait()
+	// Stop actors by shuting down their rpc client and closing quit channel.
 	for _, a := range actors {
 		a.Stop()
 		a.WaitForShutdown()
 	}
+
 	// shutdown only after all actors have stopped
 	for _, a := range actors {
 		a.Shutdown()
 	}
-	// wait for actor goroutines to return
-	wg.Wait()
 }

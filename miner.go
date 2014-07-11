@@ -46,7 +46,7 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock i
 
 	// blocksConnected defines how many blocks have to connect to the blockchain
 	// before the simulation normally stop.
-	const blocksConnected int32 = 20000
+	const blocksConnected int32 = 13000
 
 	minerArgs := []string{
 		"--simnet",
@@ -89,7 +89,7 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock i
 				log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
 			}
 			if height == blocksConnected {
-				stop <- struct{}{}
+				close(stop)
 			}
 		},
 	}
@@ -111,7 +111,7 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock i
 	// Use just one core for mining.
 	miner.client.SetGenerate(true, 1)
 
-	// Register for block and NewTransaction notifications.
+	// Register for block notifications.
 	if err := miner.client.NotifyBlocks(); err != nil {
 		log.Printf("Cannot register for block notifications: %v", err)
 		return miner, err

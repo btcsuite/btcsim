@@ -64,14 +64,13 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 
 // Start creates the command to execute a wallet process and starts the
 // command in the background, attaching the command's stderr and stdout
-// to the passed writers.  Nil writers may be used to discard output.
+// to the passed writers. Nil writers may be used to discard output.
 //
 // In addition to starting the wallet process, this runs goroutines to
-// handle wallet notifications (TODO: actually do this) and requests
-// the wallet process to create an intial encrypted wallet, so that it
-// can actually send and receive BTC.
+// handle wallet notifications and requests the wallet process to create
+// an intial encrypted wallet, so that it can actually send and receive BTC.
 //
-// If the RPC client connction cannot be established or wallet cannot
+// If the RPC client connection cannot be established or wallet cannot
 // be created, the wallet process is killed and the actor directory
 // removed.
 func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
@@ -176,6 +175,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		}
 		addressSpace[i] = addr
 	}
+
 	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
 		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
 		return err
@@ -191,8 +191,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	case <-a.quit:
 		// If the simulation ends for any reason before the actor's coinbase
 		// matures, we don't want it to get stuck on spendAfter.
-		// signal simulator to break out txn loop
-		a.stop <- struct{}{}
 		return nil
 	}
 
@@ -207,8 +205,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 			case a.upstream <- addressSpace[rand.Int()%a.addressNum]:
 				// Send address to upstream to request receiving a transaction.
 			case <-a.quit:
-				// signal simulator to break out txn loop
-				a.stop <- struct{}{}
 				return
 			}
 		}
@@ -226,8 +222,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 					log.Printf("Cannot send transaction: %v", err)
 				}
 			case <-a.quit:
-				// signal simulator to break out txn loop
-				a.stop <- struct{}{}
 				return
 			}
 		}
@@ -264,9 +258,7 @@ func (a *Actor) Stop() {
 	}
 }
 
-// WaitForShutdown waits until every goroutine inside an actor, including
-// the actor goroutine itself, has returned and kills the respective
-// btcwallet process.
+// WaitForShutdown waits until every actor goroutine has returned
 func (a *Actor) WaitForShutdown() {
 	a.wg.Wait()
 }
