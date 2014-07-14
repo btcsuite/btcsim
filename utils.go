@@ -1,6 +1,6 @@
 package main
-// place and start of file io utils for sim configurations
 
+// place and start of file io utils for sim configurations
 
 import (
 	"encoding/csv"
@@ -14,7 +14,7 @@ import (
 func ReadCSV(f string) map[int]int {
 	file, err := os.Open(f)
 	if err != nil {
-		log.Printf("s% configuration file not loaded", err)
+		log.Printf("%s configuration file not loaded", err)
 		// return value if needed
 	}
 	defer file.Close()
@@ -34,13 +34,9 @@ func ReadCSV(f string) map[int]int {
 		k, err1 := strconv.Atoi(record[0])
 		v, err2 := strconv.Atoi(record[1])
 		if err1 != nil || err2 != nil {
-			log.Println("Config Ln: d% not an integer.", i)
+			log.Printf("Config Ln: %d not an integer.", i)
 		}
 		params[k] = v
 	}
-   return params
+	return params
 }
-
-
-
-
