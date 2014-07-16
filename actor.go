@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/conformal/btcjson"
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
 )
@@ -83,7 +84,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	amount := btcutil.Amount(50 * btcutil.SatoshiPerBitcoin)
 	spendAfter := make(chan struct{})
 	start := true
-	balanceUpdate := make(chan btcutil.Amount, 1)
 	connected := make(chan struct{})
 	var firstConn bool
 	const timeoutSecs int64 = 3600 * 24
@@ -120,19 +120,11 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 				connected <- struct{}{}
 			}
 		},
-		// Update on every round bitcoin value.
 		OnAccountBalance: func(account string, balance btcutil.Amount, confirmed bool) {
 			// Block actors at start until coinbase matures (equals or is more than 50 BTC).
 			if balance >= amount && start {
 				spendAfter <- struct{}{}
 				start = false
-			}
-			if balance != 0 && len(balanceUpdate) == 0 {
-				balanceUpdate <- balance
-			} else if balance != 0 {
-				// Discard previous update
-				<-balanceUpdate
-				balanceUpdate <- balance
 			}
 		},
 	}
@@ -194,8 +186,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		return nil
 	}
 
-	balance := <-balanceUpdate
-
 	// Start a goroutine to send addresses upstream.
 	a.wg.Add(1)
 	go func() {
@@ -210,16 +200,49 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		}
 	}()
 
+	// utxo is used to transfer utxo results from the main actor goroutine to
+	// the goroutine responsible for creating and sending raw transactions.
+	utxo := make(chan btcjson.ListUnspentResult)
+
 	// Start a goroutine to send transactions.
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
+
 		for {
 			select {
-			case addr := <-a.downstream:
-				// Receive address from downstream to send a transaction to.
-				if _, err := a.client.SendFromMinConf("", addr, amount, 0); err != nil {
-					log.Printf("Cannot send transaction: %v", err)
+			case tx := <-utxo:
+				// Create a raw transaction
+				inputs := []btcjson.TransactionInput{{tx.TxId, tx.Vout}}
+				amt, _ := btcutil.NewAmount(tx.Amount)
+				var addr btcutil.Address
+
+				select {
+				case addr = <-a.downstream:
+				case <-a.quit:
+					return
+				}
+
+				amounts := map[btcutil.Address]btcutil.Amount{addr: amt}
+				msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
+				if err != nil {
+					log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
+					continue
+				}
+				// sign it
+				msgTx, ok, err := a.client.SignRawTransaction(msgTx)
+				if err != nil {
+					log.Printf("%s: Cannot sign raw transaction: %v", rpcConf.Host, err)
+					continue
+				}
+				if !ok {
+					log.Printf("%s: Not all inputs have been signed", rpcConf.Host)
+					continue
+				}
+				// and finally send it.
+				if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
+					log.Printf("%s: Cannot send raw transaction: %v", rpcConf.Host, err)
+					continue
 				}
 			case <-a.quit:
 				return
@@ -228,19 +251,32 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	}()
 
 out:
-	// Receive account balance updates.
+	// List unspent transactions.
 	for {
-		select {
-		case balance = <-balanceUpdate:
-			// Start sending funds
-			if balance >= amount && a.downstream == nil {
-				a.downstream = com.downstream
-				// else block downstream (ie. stop spending funds)
-			} else if balance < amount && a.downstream != nil {
-				a.downstream = nil
+		unspent, err := a.client.ListUnspent()
+		if err != nil {
+			log.Printf("%s: Cannot list transactions: %v", rpcConf.Host, err)
+			return err
+		}
+
+		// Search for eligible utxos
+		for _, u := range unspent {
+			if isMatureCoinbase(&u) || isNotCoinbase(&u) {
+				select {
+				case utxo <- u:
+					// Send an eligible utxo result to the goroutine responsible
+					// for sending transactions.
+				case <-a.quit:
+					break out
+				}
 			}
+		}
+
+		// Non-blocking check of quit channel
+		select {
 		case <-a.quit:
 			break out
+		default:
 		}
 	}
 
@@ -282,6 +318,23 @@ func (a *Actor) Shutdown() {
 // Cleanup removes the directory an Actor's wallet process was previously using.
 func (a *Actor) Cleanup() error {
 	return os.RemoveAll(a.args.dir)
+}
+
+// ForceShutdown shutdowns an actor that unexpectedly exited a.Start
+func (a *Actor) ForceShutdown() {
+	a.Stop()
+	a.WaitForShutdown()
+	a.Shutdown()
+}
+
+// isMatureCoinbase checks if a coinbase transaction has reached maturity
+func isMatureCoinbase(tx *btcjson.ListUnspentResult) bool {
+	return tx.Confirmations >= 100
+}
+
+// isNotCoinbase checks if a utxo is not a coinbase
+func isNotCoinbase(tx *btcjson.ListUnspentResult) bool {
+	return tx.Vout > 0
 }
 
 type procArgs struct {

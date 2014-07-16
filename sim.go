@@ -119,6 +119,7 @@ func main() {
 
 	ntfnHandlers := rpc.NotificationHandlers{
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
+			log.Printf("Transaction accepted: Hash: %v, Amount: %v", hash, amount)
 			timeReceived <- time.Now()
 		},
 	}
@@ -175,7 +176,7 @@ func main() {
 			defer wg.Done()
 			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
 				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
-				// TODO: reslice actors when one actor cannot start
+				a.ForceShutdown()
 			}
 		}(a, com)
 	}
