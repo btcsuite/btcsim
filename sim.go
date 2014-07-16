@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -63,6 +64,24 @@ func main() {
 		upstream:   make(chan btcutil.Address, actorsAmount),
 		downstream: make(chan btcutil.Address, actorsAmount),
 		stop:       make(chan struct{}, actorsAmount),
+	}
+
+	// Save info about the simulation in permanent store.
+	var stats *os.File
+	var err error
+	stats, err = os.OpenFile("btcsim-stats.txt", os.O_RDWR, os.ModePerm)
+	if os.IsNotExist(err) {
+		stats, err = os.Create("btcsim-stats.txt")
+		if err != nil {
+			log.Printf("Cannot create stats file: %v", err)
+		}
+	}
+	defer stats.Close()
+
+	// Move the offset at the end of the file
+	off, err := stats.Seek(0, os.SEEK_END)
+	if err != nil {
+		log.Printf("Cannot set offset at the end of the file: %v", err)
 	}
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
@@ -261,6 +280,18 @@ out:
 	tps, ok := <-tpsChan
 	if ok {
 		log.Printf("Average transactions per sec: %.2f", tps)
+	}
+
+	// Write info about every simulation in permanent store
+	// Current info kept:
+	// time the simulation ended: number of actors, transactions per second
+	info := fmt.Sprintf("%v: actors: %d, tps: %.2f\n", time.Now(), actorsAmount, tps)
+
+	if _, err := stats.WriteAt([]byte(info), off); err != nil {
+		log.Printf("Cannot write to file: %v", err)
+	}
+	if err := stats.Sync(); err != nil {
+		log.Printf("Cannot sync file: %v", err)
 	}
 }
 
