@@ -24,16 +24,16 @@ import (
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
 type Actor struct {
-	args       procArgs
-	cmd        *exec.Cmd
-	client     *rpc.Client
-	addressNum int
-	downstream chan btcutil.Address
-	upstream   chan btcutil.Address
-	stop       chan struct{}
-	quit       chan struct{}
-	wg         sync.WaitGroup
-	closed     bool
+	args         procArgs
+	cmd          *exec.Cmd
+	client       *rpc.Client
+	maxAddresses int
+	downstream   chan btcutil.Address
+	upstream     chan btcutil.Address
+	stop         chan struct{}
+	quit         chan struct{}
+	wg           sync.WaitGroup
+	closed       bool
 }
 
 // NewActor creates a new actor which runs its own wallet process connecting
@@ -57,8 +57,8 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 			port:             strconv.FormatUint(uint64(port), 10),
 			walletPassphrase: "walletpass",
 		},
-		addressNum: 1000,
-		quit:       make(chan struct{}),
+		maxAddresses: *maxAddresses,
+		quit:         make(chan struct{}),
 	}
 	return &a, nil
 }
@@ -134,7 +134,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	// after each failure.
 	var client *rpc.Client
 	var connErr error
-	for i := 0; i < connRetry; i++ {
+	for i := 0; i < *maxConnRetries; i++ {
 		if client, connErr = rpc.New(&rpcConf, &ntfnHandlers); connErr != nil {
 			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
 			continue
@@ -158,7 +158,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 
 	// Create wallet addresses and unlock wallet.
 	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
-	addressSpace := make([]btcutil.Address, a.addressNum)
+	addressSpace := make([]btcutil.Address, a.maxAddresses)
 	for i := range addressSpace {
 		addr, err := client.GetNewAddress()
 		if err != nil {
@@ -174,7 +174,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	}
 
 	// Send a random address upstream that will be used by the cpu miner.
-	a.upstream <- addressSpace[rand.Int()%a.addressNum]
+	a.upstream <- addressSpace[rand.Int()%a.maxAddresses]
 
 	select {
 	// Wait for matured coinbase
@@ -192,7 +192,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		defer a.wg.Done()
 		for {
 			select {
-			case a.upstream <- addressSpace[rand.Int()%a.addressNum]:
+			case a.upstream <- addressSpace[rand.Int()%a.maxAddresses]:
 				// Send address to upstream to request receiving a transaction.
 			case <-a.quit:
 				return

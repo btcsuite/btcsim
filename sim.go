@@ -5,6 +5,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -49,21 +50,34 @@ type Communication struct {
 	stop       chan struct{}
 }
 
-const connRetry = 15
+var (
+	// maxConnRetries defines the number of times to retry rpc client connections
+	maxConnRetries = flag.Int("maxconnretries", 15, "Maximum retries to connect to rpc client")
+
+	// maxActors defines the Number of actors to spawn
+	maxActors = flag.Int("maxactors", 1, "Maximum number of actors")
+
+	// maxBlocks defines how many blocks have to connect to the blockchain
+	// before the simulation normally stops
+	maxBlocks = flag.Int("maxblocks", 13000, "Maximum blocks to generate")
+
+	// maxAddresses defines the number of addresses to generate per actor
+	maxAddresses = flag.Int("maxaddresses", 1000, "Maximum addresses per actor")
+)
 
 func main() {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	rand.Seed(int64(time.Now().Nanosecond()))
 
-	// Number of actors
-	var actorsAmount = 1
-	actors := make([]*Actor, 0, actorsAmount)
+	flag.Parse()
+
+	actors := make([]*Actor, 0, *maxActors)
 	var wg sync.WaitGroup
-	timeReceived := make(chan time.Time, actorsAmount)
+	timeReceived := make(chan time.Time, *maxActors)
 	com := Communication{
-		upstream:   make(chan btcutil.Address, actorsAmount),
-		downstream: make(chan btcutil.Address, actorsAmount),
-		stop:       make(chan struct{}, actorsAmount),
+		upstream:   make(chan btcutil.Address, *maxActors),
+		downstream: make(chan btcutil.Address, *maxActors),
+		stop:       make(chan struct{}, *maxActors),
 	}
 
 	// Save info about the simulation in permanent store.
@@ -125,7 +139,7 @@ func main() {
 	}
 
 	var client *rpc.Client
-	for i := 0; i < connRetry; i++ {
+	for i := 0; i < *maxConnRetries; i++ {
 		if client, err = rpc.New(&rpcConf, &ntfnHandlers); err != nil {
 			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
 			continue
@@ -149,7 +163,7 @@ func main() {
 		return
 	}
 
-	for i := 0; i < actorsAmount; i++ {
+	for i := 0; i < *maxActors; i++ {
 		a, err := NewActor(&defaultChainServer, uint16(18557+i))
 		if err != nil {
 			log.Printf("Cannot create actor on %s: %v", "localhost:"+a.args.port, err)
@@ -181,7 +195,7 @@ func main() {
 		}(a, com)
 	}
 
-	addressTable := make([]btcutil.Address, actorsAmount)
+	addressTable := make([]btcutil.Address, *maxActors)
 	for i, a := range actors {
 		select {
 		case addressTable[i] = <-com.upstream:
@@ -286,7 +300,7 @@ out:
 	// Write info about every simulation in permanent store
 	// Current info kept:
 	// time the simulation ended: number of actors, transactions per second
-	info := fmt.Sprintf("%v: actors: %d, tps: %.2f\n", time.Now(), actorsAmount, tps)
+	info := fmt.Sprintf("%v: actors: %d, tps: %.2f\n", time.Now(), *maxActors, tps)
 
 	if _, err := stats.WriteAt([]byte(info), off); err != nil {
 		log.Printf("Cannot write to file: %v", err)
