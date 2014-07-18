@@ -44,10 +44,6 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock i
 		logdir:  logdir,
 	}
 
-	// blocksConnected defines how many blocks have to connect to the blockchain
-	// before the simulation normally stop.
-	const blocksConnected int32 = 13000
-
 	minerArgs := []string{
 		"--simnet",
 		"-u" + defaultChainServer.user,
@@ -81,21 +77,21 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock i
 	}
 
 	ntfnHandlers := rpc.NotificationHandlers{
-		// When a block higher than blocksConnected connects to the chain,
+		// When a block higher than maxBlocks connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
 			if height > currentBlock {
 				log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
 			}
-			if height == blocksConnected {
+			if height == int32(*maxBlocks) {
 				close(stop)
 			}
 		},
 	}
 
 	var client *rpc.Client
-	for i := 0; i < connRetry; i++ {
+	for i := 0; i < *maxConnRetries; i++ {
 		if client, err = rpc.New(&rpcConf, &ntfnHandlers); err != nil {
 			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
 			continue
