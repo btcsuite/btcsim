@@ -172,18 +172,21 @@ func main() {
 		actors = append(actors, a)
 	}
 
-	// chan to wait for interrupt handler to finish
 	exit := make(chan struct{})
+	// chan to wait for interrupt handler to finish
+	wait := make(chan struct{})
 	// close actors and exit btcd on interrupt
 	addInterruptHandler(func() {
+		close(exit)
 		Close(actors, &wg)
 		if err := Exit(btcd); err != nil {
 			log.Printf("Cannot kill initial btcd process: %v", err)
 		}
-		close(exit)
+		close(wait)
 	})
 
 	// Start actors.
+	fail := make(chan struct{}, *maxActors)
 	for _, a := range actors {
 		wg.Add(1)
 		go func(a *Actor, com Communication) {
@@ -191,18 +194,53 @@ func main() {
 			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
 				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
 				a.ForceShutdown()
+				fail <- struct{}{}
 			}
 		}(a, com)
 	}
 
+	// Start a goroutine to check for failed actors
+	forceShutdown := make(chan struct{})
+	go func() {
+		var actorsFailed int
+
+		for {
+			select {
+			case <-fail:
+				actorsFailed++
+
+				if actorsFailed == *maxActors {
+					close(forceShutdown)
+					log.Printf("All actors were forcibly shutdown")
+					return
+				}
+			case <-com.stop:
+				return
+			case <-exit:
+				return
+
+			}
+		}
+	}()
+
 	addressTable := make([]btcutil.Address, *maxActors)
+	var quit int
 	for i, a := range actors {
 		select {
 		case addressTable[i] = <-com.upstream:
-		case <-a.quit:
+		case <-a.quit: // instead of forceShutdown
+			quit++
+
+			if quit == *maxActors {
+				if err := Exit(btcd); err != nil {
+					log.Printf("Cannot kill initial btcd process: %v", err)
+				}
+				return
+			}
+		case <-exit:
 			// received an interrupt when addresses were being
 			// generated. can't continue simulation without addresses
-			<-exit
+			<-wait
 			return
 		}
 	}
@@ -253,9 +291,11 @@ func main() {
 			case <-com.stop:
 				diff := last.Sub(first)
 				tpsChan <- float64(txnCount) / diff.Seconds()
-				close(tpsChan)
 				return
 			case <-exit:
+				return
+			case <-forceShutdown:
+				close(tpsChan)
 				return
 			}
 		}
@@ -269,13 +309,22 @@ out:
 			case com.downstream <- addr:
 			case <-com.stop:
 				break out
+			case <-exit:
+				<-wait
+				return
+			case <-forceShutdown:
+				break out
 			}
 		case <-com.stop:
 			// Normal simulation exit
 			break out
 		case <-exit:
+			<-wait
 			// Interrupt handler has finished so exit
 			return
+		case <-forceShutdown:
+			// All actors unexpectedly quit
+			break out
 		}
 	}
 
@@ -295,18 +344,18 @@ out:
 	tps, ok := <-tpsChan
 	if ok {
 		log.Printf("Average transactions per sec: %.2f", tps)
-	}
 
-	// Write info about every simulation in permanent store
-	// Current info kept:
-	// time the simulation ended: number of actors, transactions per second
-	info := fmt.Sprintf("%v: actors: %d, tps: %.2f\n", time.Now(), *maxActors, tps)
+		// Write info about every simulation in permanent store
+		// Current info kept:
+		// time the simulation ended: number of actors, transactions per second
+		info := fmt.Sprintf("%v: actors: %d, tps: %.2f\n", time.Now(), *maxActors, tps)
 
-	if _, err := stats.WriteAt([]byte(info), off); err != nil {
-		log.Printf("Cannot write to file: %v", err)
-	}
-	if err := stats.Sync(); err != nil {
-		log.Printf("Cannot sync file: %v", err)
+		if _, err := stats.WriteAt([]byte(info), off); err != nil {
+			log.Printf("Cannot write to file: %v", err)
+		}
+		if err := stats.Sync(); err != nil {
+			log.Printf("Cannot sync file: %v", err)
+		}
 	}
 }
 
