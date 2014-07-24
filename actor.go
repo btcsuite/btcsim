@@ -30,6 +30,7 @@ type Actor struct {
 	maxAddresses int
 	downstream   chan btcutil.Address
 	upstream     chan btcutil.Address
+	errChan      chan struct{}
 	stop         chan struct{}
 	quit         chan struct{}
 	wg           sync.WaitGroup
@@ -74,9 +75,14 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 // If the RPC client connection cannot be established or wallet cannot
 // be created, the wallet process is killed and the actor directory
 // removed.
-func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
+func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
+	a.downstream = com.downstream
+	a.upstream = com.upstream
+	a.errChan = com.errChan
+
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
+		a.errChan <- struct{}{}
 		return errors.New("actor command previously created")
 	}
 
@@ -88,10 +94,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	var firstConn bool
 	const timeoutSecs int64 = 3600 * 24
 
-	a.downstream = com.downstream
-	a.upstream = com.upstream
-	a.stop = com.stop
-
 	// Create and start command in background.
 	a.cmd = a.args.Cmd()
 	a.cmd.Stdout = stdout
@@ -101,6 +103,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 			log.Printf("Cannot remove actor directory after "+
 				"failed start of wallet process: %v", err)
 		}
+		a.errChan <- struct{}{}
 		return err
 	}
 
@@ -143,7 +146,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 		break
 	}
 	if a.client == nil {
-		a.Shutdown()
+		a.errChan <- struct{}{}
 		return connErr
 	}
 
@@ -152,7 +155,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 
 	// Create the wallet.
 	if err := a.client.CreateEncryptedWallet(a.args.walletPassphrase); err != nil {
-		a.Shutdown()
+		a.errChan <- struct{}{}
 		return err
 	}
 
@@ -160,9 +163,10 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
 	addressSpace := make([]btcutil.Address, a.maxAddresses)
 	for i := range addressSpace {
-		addr, err := client.GetNewAddress()
+		addr, err := a.client.GetNewAddress()
 		if err != nil {
 			log.Printf("%s: Cannot create address #%d", rpcConf.Host, i+1)
+			a.errChan <- struct{}{}
 			return err
 		}
 		addressSpace[i] = addr
@@ -170,6 +174,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com Communication) error {
 
 	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
 		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
+		a.errChan <- struct{}{}
 		return err
 	}
 
@@ -256,6 +261,7 @@ out:
 		unspent, err := a.client.ListUnspent()
 		if err != nil {
 			log.Printf("%s: Cannot list transactions: %v", rpcConf.Host, err)
+			a.errChan <- struct{}{}
 			return err
 		}
 
@@ -329,12 +335,12 @@ func (a *Actor) ForceShutdown() {
 
 // isMatureCoinbase checks if a coinbase transaction has reached maturity
 func isMatureCoinbase(tx *btcjson.ListUnspentResult) bool {
-	return tx.Confirmations >= 100
+	return tx.Confirmations >= 100 && tx.Vout == 0
 }
 
 // isNotCoinbase checks if a utxo is not a coinbase
 func isNotCoinbase(tx *btcjson.ListUnspentResult) bool {
-	return tx.Vout > 0
+	return tx.Vout > 0 && tx.Confirmations >= 0
 }
 
 type procArgs struct {

@@ -6,7 +6,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -14,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
 	rpc "github.com/conformal/btcrpcclient"
@@ -42,14 +40,6 @@ var defaultChainServer = ChainServer{
 	pass:    "rpcpass",
 }
 
-// Communication is consisted of the necessary primitives used
-// for communication between the main goroutine and actors.
-type Communication struct {
-	upstream   chan btcutil.Address
-	downstream chan btcutil.Address
-	stop       chan struct{}
-}
-
 var (
 	// maxConnRetries defines the number of times to retry rpc client connections
 	maxConnRetries = flag.Int("maxconnretries", 15, "Maximum retries to connect to rpc client")
@@ -65,38 +55,16 @@ var (
 	maxAddresses = flag.Int("maxaddresses", 1000, "Maximum addresses per actor")
 )
 
-func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	rand.Seed(int64(time.Now().Nanosecond()))
-
+func init() {
 	flag.Parse()
 
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	rand.Seed(time.Now().UnixNano())
+}
+
+func main() {
 	actors := make([]*Actor, 0, *maxActors)
-	var wg sync.WaitGroup
-	timeReceived := make(chan time.Time, *maxActors)
-	com := Communication{
-		upstream:   make(chan btcutil.Address, *maxActors),
-		downstream: make(chan btcutil.Address, *maxActors),
-		stop:       make(chan struct{}, *maxActors),
-	}
-
-	// Save info about the simulation in permanent store.
-	var stats *os.File
-	var err error
-	stats, err = os.OpenFile("btcsim-stats.txt", os.O_RDWR, os.ModePerm)
-	if os.IsNotExist(err) {
-		stats, err = os.Create("btcsim-stats.txt")
-		if err != nil {
-			log.Printf("Cannot create stats file: %v", err)
-		}
-	}
-	defer stats.Close()
-
-	// Move the offset at the end of the file
-	off, err := stats.Seek(0, os.SEEK_END)
-	if err != nil {
-		log.Printf("Cannot set offset at the end of the file: %v", err)
-	}
+	com := NewCommunication()
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
 	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
@@ -134,7 +102,7 @@ func main() {
 	ntfnHandlers := rpc.NotificationHandlers{
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
 			log.Printf("Transaction accepted: Hash: %v, Amount: %v", hash, amount)
-			timeReceived <- time.Now()
+			com.timeReceived <- time.Now()
 		},
 	}
 
@@ -172,141 +140,23 @@ func main() {
 		actors = append(actors, a)
 	}
 
-	// chan to wait for interrupt handler to finish
-	exit := make(chan struct{})
 	// close actors and exit btcd on interrupt
 	addInterruptHandler(func() {
-		Close(actors, &wg)
+		close(com.interrupt)
+		Close(actors)
 		if err := Exit(btcd); err != nil {
 			log.Printf("Cannot kill initial btcd process: %v", err)
 		}
-		close(exit)
+		close(com.waitForInterrupt)
 	})
 
-	// Start actors.
-	for _, a := range actors {
-		wg.Add(1)
-		go func(a *Actor, com Communication) {
-			defer wg.Done()
-			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
-				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
-				a.ForceShutdown()
-			}
-		}(a, com)
-	}
-
-	addressTable := make([]btcutil.Address, *maxActors)
-	for i, a := range actors {
-		select {
-		case addressTable[i] = <-com.upstream:
-		case <-a.quit:
-			// received an interrupt when addresses were being
-			// generated. can't continue simulation without addresses
-			<-exit
-			return
-		}
-	}
-
-	currentBlock, err := client.GetBlockCount()
-	if err != nil {
-		log.Printf("Cannot get block count: %v", err)
-	}
-
-	// Start mining.
-	miner, err := NewMiner(addressTable, com.stop, int32(currentBlock))
-	if err != nil {
-		Close(actors, &wg)
-		if miner != nil { // Miner started so we have to shut it down
-			miner.Shutdown()
-		}
-		if err := Exit(btcd); err != nil {
-			log.Printf("Cannot kill initial btcd process: %v", err)
-		}
-		return
-	}
-
-	// cleanup the miner on interrupt
-	addInterruptHandler(func() {
-		miner.Shutdown()
-	})
-
-	// Add mining btcd listen interface as a node
-	client.AddNode("localhost:18550", rpc.ANAdd)
-
-	// tpsChan is used to deliver the average transactions per second
-	// of a simulation
-	tpsChan := make(chan float64, 1)
-	// Start a goroutine to receive transaction times
-	go func() {
-		var first, last time.Time
-		var txnCount int
-		firstTx := true
-
-		for {
-			select {
-			case last = <-timeReceived:
-				if firstTx {
-					first = last
-					firstTx = false
-				}
-				txnCount++
-			case <-com.stop:
-				diff := last.Sub(first)
-				tpsChan <- float64(txnCount) / diff.Seconds()
-				close(tpsChan)
-				return
-			case <-exit:
-				return
-			}
-		}
-	}()
-
-out:
-	for {
-		select {
-		case addr := <-com.upstream:
-			select {
-			case com.downstream <- addr:
-			case <-com.stop:
-				break out
-			}
-		case <-com.stop:
-			// Normal simulation exit
-			break out
-		case <-exit:
-			// Interrupt handler has finished so exit
-			return
-		}
-	}
-
-	// Stop mining unless the miner is already closed
-	if !miner.closed {
-		if err := miner.client.SetGenerate(true, 0); err != nil {
-			log.Printf("Cannot set miner not to generate coins: %v", err)
-		}
-	}
-
-	Close(actors, &wg)
-	miner.Shutdown()
-	if err := Exit(btcd); err != nil {
-		log.Printf("Cannot kill initial btcd process: %v", err)
-	}
+	// Start simulation.
+	tpsChan := com.Start(actors, client, btcd)
+	com.WaitForShutdown()
 
 	tps, ok := <-tpsChan
 	if ok {
 		log.Printf("Average transactions per sec: %.2f", tps)
-	}
-
-	// Write info about every simulation in permanent store
-	// Current info kept:
-	// time the simulation ended: number of actors, transactions per second
-	info := fmt.Sprintf("%v: actors: %d, tps: %.2f\n", time.Now(), *maxActors, tps)
-
-	if _, err := stats.WriteAt([]byte(info), off); err != nil {
-		log.Printf("Cannot write to file: %v", err)
-	}
-	if err := stats.Sync(); err != nil {
-		log.Printf("Cannot sync file: %v", err)
 	}
 }
 
@@ -326,8 +176,7 @@ func Exit(cmd *exec.Cmd) (err error) {
 
 // Close sends close signal to actors, waits for actor goroutines
 // to exit and then shuts down all actors.
-func Close(actors []*Actor, wg *sync.WaitGroup) {
-	defer wg.Wait()
+func Close(actors []*Actor) {
 	// Stop actors by shuting down their rpc client and closing quit channel.
 	for _, a := range actors {
 		a.Stop()
