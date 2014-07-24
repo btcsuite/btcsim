@@ -65,12 +65,14 @@ var (
 	maxAddresses = flag.Int("maxaddresses", 1000, "Maximum addresses per actor")
 )
 
-func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	rand.Seed(int64(time.Now().Nanosecond()))
-
+func init() {
 	flag.Parse()
 
+	runtime.GOMAXPROCS(runtime.NumCPU())
+	rand.Seed(time.Now().UnixNano())
+}
+
+func main() {
 	actors := make([]*Actor, 0, *maxActors)
 	var wg sync.WaitGroup
 	timeReceived := make(chan time.Time, *maxActors)
