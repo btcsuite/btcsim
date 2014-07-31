@@ -21,6 +21,9 @@ import (
 	"github.com/conformal/btcutil"
 )
 
+// minFee is the minimum tx fee that can be paid
+const minFee btcutil.Amount = 1e4 // 0.0001 BTC
+
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
 type Actor struct {
@@ -31,6 +34,7 @@ type Actor struct {
 	downstream   chan btcutil.Address
 	upstream     chan btcutil.Address
 	errChan      chan struct{}
+	txErrChan    chan error
 	stop         chan struct{}
 	quit         chan struct{}
 	wg           sync.WaitGroup
@@ -79,6 +83,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	a.downstream = com.downstream
 	a.upstream = com.upstream
 	a.errChan = com.errChan
+	a.txErrChan = com.txErrChan
 
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
@@ -159,6 +164,15 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		return err
 	}
 
+	// Wait for wallet sync
+	for i := 0; i < *maxConnRetries; i++ {
+		if _, err := a.client.GetBalance(""); err != nil {
+			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
+			continue
+		}
+		break
+	}
+
 	// Create wallet addresses and unlock wallet.
 	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
 	addressSpace := make([]btcutil.Address, a.maxAddresses)
@@ -219,7 +233,13 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 			case tx := <-utxo:
 				// Create a raw transaction
 				inputs := []btcjson.TransactionInput{{tx.TxId, tx.Vout}}
-				amt, _ := btcutil.NewAmount(tx.Amount)
+				amt, err := btcutil.NewAmount(tx.Amount)
+				if err != nil {
+					log.Printf("Cannot use amount: %v", err)
+					return
+				}
+				// provide a fee to ensure the tx gets mined
+				amt = amt - minFee
 				var addr btcutil.Address
 
 				select {
@@ -232,21 +252,25 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 				msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
 				if err != nil {
 					log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
+					a.txErrChan <- err
 					continue
 				}
 				// sign it
 				msgTx, ok, err := a.client.SignRawTransaction(msgTx)
 				if err != nil {
 					log.Printf("%s: Cannot sign raw transaction: %v", rpcConf.Host, err)
+					a.txErrChan <- err
 					continue
 				}
 				if !ok {
 					log.Printf("%s: Not all inputs have been signed", rpcConf.Host)
+					a.txErrChan <- err
 					continue
 				}
 				// and finally send it.
 				if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
 					log.Printf("%s: Cannot send raw transaction: %v", rpcConf.Host, err)
+					a.txErrChan <- err
 					continue
 				}
 			case <-a.quit:

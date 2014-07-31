@@ -28,7 +28,8 @@ type Miner struct {
 
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
 // to control it.
-func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock int32) (*Miner, error) {
+func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
+	start chan<- struct{}, txpool chan<- struct{}, currentBlock int32) (*Miner, error) {
 
 	datadir, err := ioutil.TempDir("", "minerData")
 	if err != nil {
@@ -87,6 +88,22 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock i
 			if height == int32(*maxBlocks) {
 				close(stop)
 			}
+			if height >= int32(*matureBlock) {
+				if start != nil {
+					start <- struct{}{}
+				}
+			}
+		},
+		// Send a signal that a tx has been accepted into the mempool. Based on
+		// the tx curve, the receiver will need to wait until required no of tx
+		// are filled up in the mempool
+		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
+			log.Printf("MINR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
+			if txpool != nil {
+				// this will not be blocked because we're creating only
+				// required no of tx and receiving all of them
+				txpool <- struct{}{}
+			}
 		},
 	}
 
@@ -101,6 +118,12 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock i
 	}
 	if miner.client == nil {
 		log.Printf("Cannot start mining rpc client: %v", err)
+		return miner, err
+	}
+
+	// Register for transaction notifications
+	if err := miner.client.NotifyNewTransactions(false); err != nil {
+		log.Printf("Cannot register for transactions notifications: %v", err)
 		return miner, err
 	}
 

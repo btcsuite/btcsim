@@ -49,10 +49,18 @@ var (
 
 	// maxBlocks defines how many blocks have to connect to the blockchain
 	// before the simulation normally stops
-	maxBlocks = flag.Int("maxblocks", 13000, "Maximum blocks to generate")
+	maxBlocks = flag.Int("maxblocks", 20000, "Maximum blocks to generate")
+
+	// matureBlock defines after which block the blockchain is mature enough to start
+	// controlled mining as per the tx curve
+	matureBlock = flag.Int("matureblock", 16200, "Block number at blockchain maturity")
 
 	// maxAddresses defines the number of addresses to generate per actor
 	maxAddresses = flag.Int("maxaddresses", 1000, "Maximum addresses per actor")
+
+	// txCurvePath is the path to a CSV file containing the block vs no. of transactions curve
+	txCurvePath = flag.String("txcurve", "",
+		"Path to the CSV File containing <block #>, <txCount> fields")
 )
 
 func init() {
@@ -63,8 +71,30 @@ func init() {
 }
 
 func main() {
+	// txCurve is a slice of Rows, each corresponding
+	// to a row in the input CSV file
+	// if txCurve is not nil, we control mining so as to
+	// get the same block vs tx count as the input curve
+	var txCurve []*Row
+	if *txCurvePath != "" {
+		var err error
+		txCurve, err = readCSV(*txCurvePath)
+		if err != nil {
+			log.Fatalf("Error reading tx curve CSV: %v", err)
+			return
+		}
+	}
+
 	actors := make([]*Actor, 0, *maxActors)
 	com := NewCommunication()
+
+	if txCurve != nil {
+		// start - start generating tx for next block
+		// txpool - tx has been accepted into miner mempool
+		// both are required only for generating tx curve
+		com.start = make(chan struct{})
+		com.txpool = make(chan struct{})
+	}
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
 	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
@@ -101,7 +131,7 @@ func main() {
 
 	ntfnHandlers := rpc.NotificationHandlers{
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			log.Printf("Transaction accepted: Hash: %v, Amount: %v", hash, amount)
+			log.Printf("CHSR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
 			com.timeReceived <- time.Now()
 		},
 	}
@@ -151,7 +181,7 @@ func main() {
 	})
 
 	// Start simulation.
-	tpsChan := com.Start(actors, client, btcd)
+	tpsChan := com.Start(actors, client, btcd, txCurve)
 	com.WaitForShutdown()
 
 	tps, ok := <-tpsChan

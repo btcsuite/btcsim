@@ -27,6 +27,9 @@ type Communication struct {
 	interrupt        chan struct{}
 	waitForInterrupt chan struct{}
 	errChan          chan struct{}
+	start            chan struct{}
+	txpool           chan struct{}
+	txErrChan        chan error
 }
 
 // NewCommunication creates a new data structure with all the
@@ -42,12 +45,13 @@ func NewCommunication() *Communication {
 		interrupt:        make(chan struct{}),
 		waitForInterrupt: make(chan struct{}),
 		errChan:          make(chan struct{}, *maxActors),
+		txErrChan:        make(chan error, *maxActors),
 	}
 }
 
 // Start handles the main part of a simulation by starting
 // all the necessary goroutines.
-func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.Cmd) (tpsChan chan float64) {
+func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.Cmd, txCurve []*Row) (tpsChan chan float64) {
 	tpsChan = make(chan float64, 1)
 
 	// Start actors
@@ -93,7 +97,7 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 	}
 
 	// Start mining.
-	miner, err := NewMiner(addressTable, com.stop, int32(currentBlock))
+	miner, err := NewMiner(addressTable, com.stop, com.start, com.txpool, int32(currentBlock))
 	if err != nil {
 		com.Shutdown(miner, actors, btcd)
 		close(com.stop) // make failedActors goroutine exit
@@ -115,7 +119,11 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 
 	// Start a goroutine to coordinate transactions
 	com.wg.Add(1)
-	go com.Communicate()
+	if txCurve != nil {
+		go com.CommunicateTxCurve(txCurve, miner)
+	} else {
+		go com.Communicate()
+	}
 
 	// Start a goroutine for shuting down the simulation when appropriate
 	com.wg.Add(1)
@@ -218,6 +226,66 @@ func (com *Communication) Communicate() {
 			return
 		}
 	}
+}
+
+// CommunicateTxCurve generates tx and controls the mining according
+// to the input block height vs tx count curve
+func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
+	defer com.wg.Done()
+
+	for _, row := range txCurve {
+		select {
+		case <-com.start:
+			// disable mining until the required no. of tx are in mempool
+			if err := miner.client.SetGenerate(false, 0); err != nil {
+				log.Printf("Cannot call setgenerate: %v", err)
+				return
+			}
+			// each address sent to com.downstream generates 1 tx
+			for i := 0; i < row.v; i++ {
+				select {
+				case addr := <-com.upstream:
+					select {
+					case com.downstream <- addr:
+					case <-com.stop:
+						return
+					case <-com.interrupt:
+						// Interrupt received
+						<-com.waitForInterrupt
+						return
+					}
+				}
+			}
+			for i := 0; i < row.v; i++ {
+				// block until either tx pool gets accepted by miner
+				// or we receive an error from the actors
+				select {
+				case <-com.txpool:
+				case err := <-com.txErrChan:
+					log.Printf("Tx error: %v", err)
+					return
+				case <-com.interrupt:
+					// Interrupt received
+					<-com.waitForInterrupt
+					return
+				}
+			}
+			// mine the above tx in the next block
+			if err := miner.client.SetGenerate(true, 1); err != nil {
+				log.Printf("Cannot call setgenerate: %v", err)
+				return
+			}
+		case <-com.stop:
+			return
+		case <-com.interrupt:
+			// Interrupt received
+			<-com.waitForInterrupt
+			return
+		}
+	}
+	// done with the curve, so stop the simulation
+	close(com.stop)
+	return
 }
 
 // Shutdown shuts down the simulation by killing the mining and the
