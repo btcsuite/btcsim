@@ -29,7 +29,7 @@ type Miner struct {
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
 // to control it.
 func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
-	start chan<- struct{}, txpool chan<- struct{}, currentBlock int32) (*Miner, error) {
+	start chan<- struct{}, txpool chan<- struct{}) (*Miner, error) {
 
 	datadir, err := ioutil.TempDir("", "minerData")
 	if err != nil {
@@ -64,7 +64,7 @@ func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
 
 	miner.cmd = exec.Command("btcd", minerArgs...)
 	if err := miner.cmd.Start(); err != nil {
-		log.Printf("%s: Cannot start mining: %v", defaultChainServer.connect, err)
+		log.Printf("%s: Cannot start cpu miner: %v", defaultChainServer.connect, err)
 		return nil, err
 	}
 
@@ -82,9 +82,7 @@ func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
-			if height > currentBlock {
-				log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
-			}
+			log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
 			if height == int32(*maxBlocks) {
 				close(stop)
 			}
@@ -128,7 +126,9 @@ func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
 	}
 
 	// Use just one core for mining.
-	miner.client.SetGenerate(true, 1)
+	if err := miner.StartMining(); err != nil {
+		return miner, err
+	}
 
 	// Register for block notifications.
 	if err := miner.client.NotifyBlocks(); err != nil {
@@ -163,4 +163,22 @@ func (m *Miner) Shutdown() {
 	} else {
 		log.Println("Miner already shutdown")
 	}
+}
+
+// StartMining sets the cpu miner to mine coins
+func (m *Miner) StartMining() error {
+	if err := m.client.SetGenerate(true, 1); err != nil {
+		log.Printf("Cannot start mining: %v", err)
+		return err
+	}
+	return nil
+}
+
+// StopMining stops the cpu miner from mining coins
+func (m *Miner) StopMining() error {
+	if err := m.client.SetGenerate(false, 0); err != nil {
+		log.Printf("Cannot stop mining: %v", err)
+		return err
+	}
+	return nil
 }

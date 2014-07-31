@@ -91,13 +91,8 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 		}
 	}
 
-	currentBlock, err := client.GetBlockCount()
-	if err != nil {
-		log.Printf("Cannot get block count: %v", err)
-	}
-
 	// Start mining.
-	miner, err := NewMiner(addressTable, com.stop, com.start, com.txpool, int32(currentBlock))
+	miner, err := NewMiner(addressTable, com.stop, com.start, com.txpool)
 	if err != nil {
 		com.Shutdown(miner, actors, btcd)
 		close(com.stop) // make failedActors goroutine exit
@@ -237,8 +232,7 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 		select {
 		case <-com.start:
 			// disable mining until the required no. of tx are in mempool
-			if err := miner.client.SetGenerate(false, 0); err != nil {
-				log.Printf("Cannot call setgenerate: %v", err)
+			if err := miner.StopMining(); err != nil {
 				return
 			}
 			// each address sent to com.downstream generates 1 tx
@@ -271,8 +265,7 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 				}
 			}
 			// mine the above tx in the next block
-			if err := miner.client.SetGenerate(true, 1); err != nil {
-				log.Printf("Cannot call setgenerate: %v", err)
+			if err := miner.StartMining(); err != nil {
 				return
 			}
 		case <-com.stop:
