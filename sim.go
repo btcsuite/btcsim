@@ -105,10 +105,22 @@ func main() {
 	}
 	defaultChainServer.cert = cert
 
+	datadir, err := ioutil.TempDir("", "chainServerData")
+	if err != nil {
+		log.Fatalf("Cannot read certificate: %v", err)
+	}
+	defer func(datadir string) {
+		if err := os.RemoveAll(datadir); err != nil {
+			log.Printf("Cannot remove mining btcd datadir: %v", err)
+			return
+		}
+	}(datadir)
+
 	btcdArgs := []string{
 		"--simnet",
 		"-u" + defaultChainServer.user,
 		"-P" + defaultChainServer.pass,
+		"--datadir=" + datadir,
 		"--rpccert=" + defaultChainServer.certPath,
 		"--rpckey=" + defaultChainServer.keyPath,
 		"--profile=",
