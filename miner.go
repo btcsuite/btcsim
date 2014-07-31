@@ -81,9 +81,6 @@ func NewMiner(addressTable []btcutil.Address, stop chan struct{}, currentBlock i
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
-			if height > currentBlock {
-				log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
-			}
 			if height == int32(*maxBlocks) {
 				close(stop)
 			}

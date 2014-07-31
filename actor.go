@@ -159,6 +159,15 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		return err
 	}
 
+	// Wait for wallet sync
+	for i := 0; i < *maxConnRetries; i++ {
+		if _, err := a.client.GetNewAddress(); err != nil {
+			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
+			continue
+		}
+		break
+	}
+
 	// Create wallet addresses and unlock wallet.
 	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
 	addressSpace := make([]btcutil.Address, a.maxAddresses)

@@ -6,11 +6,13 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -49,10 +51,10 @@ var (
 
 	// maxBlocks defines how many blocks have to connect to the blockchain
 	// before the simulation normally stops
-	maxBlocks = flag.Int("maxblocks", 13000, "Maximum blocks to generate")
+	maxBlocks = flag.Int("maxblocks", 14000, "Maximum blocks to generate")
 
 	// maxAddresses defines the number of addresses to generate per actor
-	maxAddresses = flag.Int("maxaddresses", 1000, "Maximum addresses per actor")
+	maxAddresses = flag.Int("maxaddresses", 10, "Maximum addresses per actor")
 )
 
 func init() {
@@ -65,6 +67,24 @@ func init() {
 func main() {
 	actors := make([]*Actor, 0, *maxActors)
 	com := NewCommunication()
+
+	// Save info about the simulation in permanent store.
+	var stats *os.File
+	var err error
+	stats, err = os.OpenFile("btcsim-stats.txt", os.O_RDWR, os.ModePerm)
+	if os.IsNotExist(err) {
+		stats, err = os.Create("btcsim-stats.txt")
+		if err != nil {
+			log.Printf("Cannot create stats file: %v", err)
+		}
+	}
+	defer stats.Close()
+
+	// Move the offset at the end of the file
+	off, err := stats.Seek(0, os.SEEK_END)
+	if err != nil {
+		log.Printf("Cannot set offset at the end of the file: %v", err)
+	}
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
 	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
@@ -155,9 +175,27 @@ func main() {
 	com.WaitForShutdown()
 
 	tps, ok := <-tpsChan
-	if ok {
+	if ok && tps != 0 {
 		log.Printf("Average transactions per sec: %.2f", tps)
+		// Write info about every simulation in permanent store
+		// Current info kept:
+		// time the simulation ended: number of actors, transactions per second
+		info := fmt.Sprintf("%v: actors: %d, tps: %.2f\n", time.Now(), *maxActors, tps)
+
+		if _, err := stats.WriteAt([]byte(info), off); err != nil {
+			log.Printf("Cannot write to file: %v", err)
+		}
+		if err := stats.Sync(); err != nil {
+			log.Printf("Cannot sync file: %v", err)
+		}
 	}
+
+	dataDir := path.Join(btcdHomeDir, "data")
+	simnetDir := path.Join(dataDir, "simnet")
+	if err := os.RemoveAll(simnetDir); err != nil {
+		log.Printf("Cannot remove simnet data directory: %v", err)
+	}
+
 }
 
 // Exit closes the cmd by passing SIGINT
