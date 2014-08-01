@@ -116,6 +116,9 @@ func main() {
 		}
 	}(datadir)
 
+	// If we panic somewhere, try to cleanup
+	defer handlePanic(com.waitForInterrupt)
+
 	btcdArgs := []string{
 		"--simnet",
 		"-u" + defaultChainServer.user,
@@ -228,5 +231,22 @@ func Close(actors []*Actor) {
 	// shutdown only after all actors have stopped
 	for _, a := range actors {
 		a.Shutdown()
+	}
+}
+
+// handlePanic is used to cleanup in case of a panic
+func handlePanic(done <-chan struct{}) {
+	if r := recover(); r != nil {
+		log.Println("Panic! Cleaning up...")
+		func() {
+			// Ignore any other panics that may
+			// occur during panic handling.
+			defer recover()
+			// invoke an interrupt to force run the handlers
+			interruptChannel <- os.Interrupt
+			// wait for interrupt handlers to finish
+			<-done
+		}()
+		panic(r)
 	}
 }
