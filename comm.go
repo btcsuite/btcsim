@@ -110,7 +110,7 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 
 	// Start a goroutine to estimate tps
 	com.wg.Add(1)
-	go com.estimateTps(tpsChan)
+	go com.estimateTps(tpsChan, txCurve)
 
 	// Start a goroutine to coordinate transactions
 	com.wg.Add(1)
@@ -155,11 +155,12 @@ func (com *Communication) failedActors() {
 
 // estimateTps estimates the average transactions per second of
 // the simulation.
-func (com *Communication) estimateTps(tpsChan chan<- float64) {
+func (com *Communication) estimateTps(tpsChan chan<- float64, txCurve []*Row) {
 	defer com.wg.Done()
 
 	var first, last time.Time
-	var txnCount int
+	var diff, curveDiff time.Duration
+	var txnCount, curveCount, block int
 	firstTx := true
 
 	for {
@@ -170,9 +171,23 @@ func (com *Communication) estimateTps(tpsChan chan<- float64) {
 				firstTx = false
 			}
 			txnCount++
+			diff = last.Sub(first)
+
+			// Controlled mining simulation
+			if txCurve != nil {
+				curveCount++
+				if curveCount == txCurve[block].v {
+					// A block has been mined; reset necessary variables
+					curveCount = 0
+					firstTx = true
+					curveDiff += diff
+					diff = curveDiff
+					// Use next block's desired transaction count
+					block++
+				}
+			}
 		case <-com.stop:
 			// Normal simulation exit
-			diff := last.Sub(first)
 			tpsChan <- float64(txnCount) / diff.Seconds()
 			return
 		case <-com.fail:
