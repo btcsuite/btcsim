@@ -61,6 +61,10 @@ var (
 	// txCurvePath is the path to a CSV file containing the block vs no. of transactions curve
 	txCurvePath = flag.String("txcurve", "",
 		"Path to the CSV File containing <block #>, <txCount> fields")
+
+	// tpb is transactions per block that will be used to generate a csv file
+	// containing <block #>, <txCount> fields
+	tpb = flag.Int("tpb", 100, "Transactions per block")
 )
 
 func init() {
@@ -78,6 +82,10 @@ func main() {
 	var txCurve []*Row
 	if *txCurvePath != "" {
 		var err error
+		if err = newCSV(); err != nil {
+			log.Fatalf("Error creating tx curve CSV: %v", err)
+			return
+		}
 		txCurve, err = readCSV(*txCurvePath)
 		if err != nil {
 			log.Fatalf("Error reading tx curve CSV: %v", err)
