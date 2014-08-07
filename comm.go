@@ -99,9 +99,10 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 	// Start mining.
 	miner, err := NewMiner(addressTable, com.stop, com.start, com.txpool, int32(currentBlock))
 	if err != nil {
-		com.Shutdown(miner, actors, btcd)
 		close(com.stop) // make failedActors goroutine exit
 		close(tpsChan)
+		com.wg.Add(1)
+		go com.Shutdown(miner, actors, btcd)
 		return
 	}
 
