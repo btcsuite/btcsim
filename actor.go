@@ -332,6 +332,7 @@ func (a *Actor) WaitForShutdown() {
 // Shutdown kills the actor btcwallet process and removes its data directories.
 func (a *Actor) Shutdown() {
 	if !a.closed {
+		go a.drainChans()
 		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
 		if err := Exit(a.cmd); err != nil {
 			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
@@ -342,6 +343,18 @@ func (a *Actor) Shutdown() {
 		a.closed = true
 	} else {
 		log.Printf("Actor on %s already shutdown", "localhost:"+a.args.port)
+	}
+}
+
+// drainChans drains all chans that might block an actor from shutting down
+func (a *Actor) drainChans() {
+	for {
+		select {
+		case <-a.downstream:
+		case <-a.upstream:
+		case <-a.errChan:
+		case <-a.txErrChan:
+		}
 	}
 }
 
