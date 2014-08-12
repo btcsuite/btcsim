@@ -319,6 +319,7 @@ func (a *Actor) Stop() {
 	select {
 	case <-a.quit:
 	default:
+		go a.drainChans()
 		a.client.Shutdown()
 		close(a.quit)
 	}
@@ -332,7 +333,6 @@ func (a *Actor) WaitForShutdown() {
 // Shutdown kills the actor btcwallet process and removes its data directories.
 func (a *Actor) Shutdown() {
 	if !a.closed {
-		go a.drainChans()
 		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
 		if err := Exit(a.cmd); err != nil {
 			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
