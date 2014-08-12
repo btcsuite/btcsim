@@ -144,6 +144,9 @@ func (com *Communication) failedActors() {
 				close(com.fail)
 				return
 			}
+		case <-com.fail:
+			// Something else has failed
+			return
 		case <-com.stop:
 			// Normal simulation exit
 			return
@@ -249,39 +252,49 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 		case <-com.start:
 			// disable mining until the required no. of tx are in mempool
 			if err := miner.StopMining(); err != nil {
+				close(com.fail)
 				return
 			}
+			var wg sync.WaitGroup
 			// each address sent to com.downstream generates 1 tx
 			for i := 0; i < row.v; i++ {
 				select {
 				case addr := <-com.upstream:
 					select {
 					case com.downstream <- addr:
+						wg.Add(1)
+						go func() {
+							defer wg.Done()
+
+							select {
+							case <-com.txpool:
+							case err := <-com.txErrChan:
+								log.Printf("Tx error: %v", err)
+							case <-com.interrupt:
+							case <-com.fail:
+							case <-com.stop:
+							}
+						}()
 					case <-com.stop:
+						return
+					case <-com.fail:
 						return
 					case <-com.interrupt:
 						// Interrupt received
 						<-com.waitForInterrupt
 						return
 					}
-				}
-			}
-			for i := 0; i < row.v; i++ {
-				// block until either tx pool gets accepted by miner
-				// or we receive an error from the actors
-				select {
-				case <-com.txpool:
-				case err := <-com.txErrChan:
-					log.Printf("Tx error: %v", err)
+				case <-com.fail:
 					return
 				case <-com.interrupt:
-					// Interrupt received
 					<-com.waitForInterrupt
 					return
 				}
 			}
+			wg.Wait()
 			// mine the above tx in the next block
 			if err := miner.StartMining(); err != nil {
+				close(com.fail)
 				return
 			}
 		case <-com.stop:
