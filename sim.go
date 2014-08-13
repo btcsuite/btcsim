@@ -192,6 +192,12 @@ func main() {
 
 	// close actors and exit btcd on interrupt
 	addInterruptHandler(func() {
+		// ignore if already interrupted before
+		select {
+		case <-com.interrupt:
+			return
+		default:
+		}
 		close(com.interrupt)
 		Close(actors)
 		if err := Exit(btcd); err != nil {
