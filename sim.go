@@ -142,11 +142,12 @@ func main() {
 
 	// Create and start RPC client.
 	rpcConf := rpc.ConnConfig{
-		Host:         defaultChainServer.connect,
-		Endpoint:     "ws",
-		User:         defaultChainServer.user,
-		Pass:         defaultChainServer.pass,
-		Certificates: defaultChainServer.cert,
+		Host:                 defaultChainServer.connect,
+		Endpoint:             "ws",
+		User:                 defaultChainServer.user,
+		Pass:                 defaultChainServer.pass,
+		Certificates:         defaultChainServer.cert,
+		DisableAutoReconnect: true,
 	}
 
 	ntfnHandlers := rpc.NotificationHandlers{

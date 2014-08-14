@@ -114,11 +114,12 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Create and start RPC client.
 	rpcConf := rpc.ConnConfig{
-		Host:         "localhost:" + a.args.port,
-		Endpoint:     "ws",
-		User:         a.args.chainSvr.user,
-		Pass:         a.args.chainSvr.pass,
-		Certificates: a.args.chainSvr.cert,
+		Host:                 "localhost:" + a.args.port,
+		Endpoint:             "ws",
+		User:                 a.args.chainSvr.user,
+		Pass:                 a.args.chainSvr.pass,
+		Certificates:         a.args.chainSvr.cert,
+		DisableAutoReconnect: true,
 	}
 
 	ntfnHandlers := rpc.NotificationHandlers{
@@ -333,7 +334,7 @@ func (a *Actor) WaitForShutdown() {
 // Shutdown kills the actor btcwallet process and removes its data directories.
 func (a *Actor) Shutdown() {
 	if !a.closed {
-		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
+		a.client.Shutdown()
 		if err := Exit(a.cmd); err != nil {
 			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
 		}
@@ -341,6 +342,7 @@ func (a *Actor) Shutdown() {
 			log.Printf("Cannot cleanup actor directory on %s: %v", "localhost:"+a.args.port, err)
 		}
 		a.closed = true
+		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
 	} else {
 		log.Printf("Actor on %s already shutdown", "localhost:"+a.args.port)
 	}

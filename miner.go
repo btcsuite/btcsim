@@ -70,11 +70,12 @@ func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
 
 	// RPC mining client initialization.
 	rpcConf := rpc.ConnConfig{
-		Host:         "localhost:18551",
-		Endpoint:     "ws",
-		User:         defaultChainServer.user,
-		Pass:         defaultChainServer.pass,
-		Certificates: defaultChainServer.cert,
+		Host:                 "localhost:18551",
+		Endpoint:             "ws",
+		User:                 defaultChainServer.user,
+		Pass:                 defaultChainServer.pass,
+		Certificates:         defaultChainServer.cert,
+		DisableAutoReconnect: true,
 	}
 
 	ntfnHandlers := rpc.NotificationHandlers{
@@ -144,6 +145,7 @@ func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
 // log directories.
 func (m *Miner) Shutdown() {
 	if !m.closed {
+		m.client.Shutdown()
 		if err := Exit(m.cmd); err != nil {
 			log.Printf("Cannot kill mining btcd process: %v", err)
 			return
