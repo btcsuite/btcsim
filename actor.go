@@ -16,9 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/conformal/btcchain"
 	"github.com/conformal/btcjson"
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
+	"github.com/conformal/btcwire"
 )
 
 // minFee is the minimum tx fee that can be paid
@@ -291,7 +293,28 @@ out:
 
 		// Search for eligible utxos
 		for _, u := range unspent {
-			if isMatureCoinbase(&u) || isNotCoinbase(&u) {
+			// a utxo is eligible if it's the output of either a non-coinbase tx or
+			// a mature coinbase tx
+			eligible := false
+			txHash, err := btcwire.NewShaHashFromStr(u.TxId)
+			if err != nil {
+				log.Printf("%s: Invalid tx id: %v", rpcConf.Host, err)
+				a.errChan <- struct{}{}
+				return err
+			}
+			rawTx, err := a.client.GetRawTransaction(txHash)
+			if err != nil {
+				log.Printf("%s: Cannot get transaction: %v", rpcConf.Host, err)
+				a.errChan <- struct{}{}
+				return err
+			}
+			if btcchain.IsCoinBase(rawTx) && u.Confirmations >= 100 {
+				eligible = true
+			}
+			if !btcchain.IsCoinBase(rawTx) {
+				eligible = true
+			}
+			if eligible {
 				select {
 				case utxo <- u:
 					// Send an eligible utxo result to the goroutine responsible
@@ -368,16 +391,6 @@ func (a *Actor) ForceShutdown() {
 	a.Stop()
 	a.WaitForShutdown()
 	a.Shutdown()
-}
-
-// isMatureCoinbase checks if a coinbase transaction has reached maturity
-func isMatureCoinbase(tx *btcjson.ListUnspentResult) bool {
-	return tx.Confirmations >= 100 && tx.Vout == 0
-}
-
-// isNotCoinbase checks if a utxo is not a coinbase
-func isNotCoinbase(tx *btcjson.ListUnspentResult) bool {
-	return tx.Vout > 0 && tx.Confirmations >= 0
 }
 
 type procArgs struct {
