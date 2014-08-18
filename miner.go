@@ -56,6 +56,7 @@ func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
 		"--listen=:18550",
 		"--rpclisten=:18551",
 		"--generate",
+		"--blockmaxsize=999000",
 	}
 
 	for _, addr := range addressTable {
