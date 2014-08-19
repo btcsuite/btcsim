@@ -321,7 +321,6 @@ func (a *Actor) Stop() {
 	case <-a.quit:
 	default:
 		go a.drainChans()
-		a.client.Shutdown()
 		close(a.quit)
 	}
 }
@@ -334,12 +333,16 @@ func (a *Actor) WaitForShutdown() {
 // Shutdown kills the actor btcwallet process and removes its data directories.
 func (a *Actor) Shutdown() {
 	if !a.closed {
-		a.client.Shutdown()
-		if err := Exit(a.cmd); err != nil {
-			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
+		if a.client != nil {
+			a.client.Shutdown()
 		}
-		if err := a.Cleanup(); err != nil {
-			log.Printf("Cannot cleanup actor directory on %s: %v", "localhost:"+a.args.port, err)
+		if a.cmd != nil {
+			if err := Exit(a.cmd); err != nil {
+				log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
+			}
+			if err := a.Cleanup(); err != nil {
+				log.Printf("Cannot cleanup actor directory on %s: %v", "localhost:"+a.args.port, err)
+			}
 		}
 		a.closed = true
 		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
