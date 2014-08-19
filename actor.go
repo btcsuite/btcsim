@@ -33,9 +33,8 @@ type Actor struct {
 	maxAddresses int
 	downstream   chan btcutil.Address
 	upstream     chan btcutil.Address
+	txpool       chan struct{}
 	errChan      chan struct{}
-	txErrChan    chan error
-	stop         chan struct{}
 	quit         chan struct{}
 	wg           sync.WaitGroup
 	closed       bool
@@ -83,7 +82,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	a.downstream = com.downstream
 	a.upstream = com.upstream
 	a.errChan = com.errChan
-	a.txErrChan = com.txErrChan
+	a.txpool = com.txpool
 
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
@@ -253,25 +252,25 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 				msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
 				if err != nil {
 					log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
-					a.txErrChan <- err
+					a.txpool <- struct{}{}
 					continue
 				}
 				// sign it
 				msgTx, ok, err := a.client.SignRawTransaction(msgTx)
 				if err != nil {
 					log.Printf("%s: Cannot sign raw transaction: %v", rpcConf.Host, err)
-					a.txErrChan <- err
+					a.txpool <- struct{}{}
 					continue
 				}
 				if !ok {
 					log.Printf("%s: Not all inputs have been signed", rpcConf.Host)
-					a.txErrChan <- err
+					a.txpool <- struct{}{}
 					continue
 				}
 				// and finally send it.
 				if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
 					log.Printf("%s: Cannot send raw transaction: %v", rpcConf.Host, err)
-					a.txErrChan <- err
+					a.txpool <- struct{}{}
 					continue
 				}
 			case <-a.quit:
@@ -355,7 +354,6 @@ func (a *Actor) drainChans() {
 		case <-a.downstream:
 		case <-a.upstream:
 		case <-a.errChan:
-		case <-a.txErrChan:
 		}
 	}
 }

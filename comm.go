@@ -18,18 +18,15 @@ import (
 // Communication is consisted of the necessary primitives used
 // for communication between the main goroutine and actors.
 type Communication struct {
-	wg               sync.WaitGroup
-	upstream         chan btcutil.Address
-	downstream       chan btcutil.Address
-	timeReceived     chan time.Time
-	stop             chan struct{}
-	fail             chan struct{}
-	interrupt        chan struct{}
-	waitForInterrupt chan struct{}
-	errChan          chan struct{}
-	start            chan struct{}
-	txpool           chan struct{}
-	txErrChan        chan error
+	wg           sync.WaitGroup
+	upstream     chan btcutil.Address
+	downstream   chan btcutil.Address
+	timeReceived chan time.Time
+	exit         chan struct{}
+	waitForExit  chan struct{}
+	errChan      chan struct{}
+	start        chan struct{}
+	txpool       chan struct{}
 }
 
 // NewCommunication creates a new data structure with all the
@@ -37,15 +34,12 @@ type Communication struct {
 // happen.
 func NewCommunication() *Communication {
 	return &Communication{
-		upstream:         make(chan btcutil.Address, *maxActors),
-		downstream:       make(chan btcutil.Address, *maxActors),
-		timeReceived:     make(chan time.Time, *maxActors),
-		stop:             make(chan struct{}, *maxActors),
-		fail:             make(chan struct{}),
-		interrupt:        make(chan struct{}),
-		waitForInterrupt: make(chan struct{}),
-		errChan:          make(chan struct{}, *maxActors),
-		txErrChan:        make(chan error, *maxActors),
+		upstream:     make(chan btcutil.Address, *maxActors),
+		downstream:   make(chan btcutil.Address, *maxActors),
+		timeReceived: make(chan time.Time, *maxActors),
+		exit:         make(chan struct{}),
+		waitForExit:  make(chan struct{}),
+		errChan:      make(chan struct{}, *maxActors),
 	}
 }
 
@@ -53,6 +47,10 @@ func NewCommunication() *Communication {
 // all the necessary goroutines.
 func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.Cmd, txCurve []*Row) (tpsChan chan float64) {
 	tpsChan = make(chan float64, 1)
+
+	// Start a goroutine to wait for the simulation to exit
+	com.wg.Add(1)
+	go com.exitWait()
 
 	// Start actors
 	for _, a := range actors {
@@ -77,14 +75,8 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 		case <-a.quit:
 			// This actor has quit
 			select {
-			case <-com.fail:
-				// All actors have aborted the simulation
+			case <-com.exit:
 				close(tpsChan)
-				return
-			case <-com.interrupt:
-				// Interrupt received
-				close(tpsChan)
-				<-com.waitForInterrupt
 				return
 			default:
 			}
@@ -92,9 +84,9 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 	}
 
 	// Start mining.
-	miner, err := NewMiner(addressTable, com.stop, com.start, com.txpool)
+	miner, err := NewMiner(addressTable, com.exit, com.start, com.txpool)
 	if err != nil {
-		close(com.stop) // make failedActors goroutine exit
+		safeClose(com.exit) // make failedActors goroutine exit
 		close(tpsChan)
 		com.wg.Add(1)
 		go com.Shutdown(miner, actors, btcd)
@@ -141,17 +133,10 @@ func (com *Communication) failedActors() {
 
 			// All actors have failed
 			if failedActors == *maxActors {
-				close(com.fail)
+				safeClose(com.exit)
 				return
 			}
-		case <-com.fail:
-			// Something else has failed
-			return
-		case <-com.stop:
-			// Normal simulation exit
-			return
-		case <-com.interrupt:
-			// Interrupt received
+		case <-com.exit:
 			return
 		}
 	}
@@ -190,17 +175,8 @@ func (com *Communication) estimateTps(tpsChan chan<- float64, txCurve []*Row) {
 					block++
 				}
 			}
-		case <-com.stop:
-			// Normal simulation exit
+		case <-com.exit:
 			tpsChan <- float64(txnCount) / diff.Seconds()
-			return
-		case <-com.fail:
-			close(tpsChan)
-			// All actors have aborted the simulation
-			return
-		case <-com.interrupt:
-			close(tpsChan)
-			// Interrupt received
 			return
 		}
 	}
@@ -217,26 +193,10 @@ func (com *Communication) Communicate() {
 		case addr := <-com.upstream:
 			select {
 			case com.downstream <- addr:
-			case <-com.stop:
-				// Normal simulation exit
-				return
-			case <-com.fail:
-				// All actors have aborted the simulation
-				return
-			case <-com.interrupt:
-				// Interrupt received
-				<-com.waitForInterrupt
+			case <-com.exit:
 				return
 			}
-		case <-com.stop:
-			// Normal simulation exit
-			return
-		case <-com.fail:
-			// All actors have aborted the simulation
-			return
-		case <-com.interrupt:
-			// Interrupt received
-			<-com.waitForInterrupt
+		case <-com.exit:
 			return
 		}
 	}
@@ -252,61 +212,38 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 		case <-com.start:
 			// disable mining until the required no. of tx are in mempool
 			if err := miner.StopMining(); err != nil {
-				close(com.fail)
+				safeClose(com.exit)
 				return
 			}
 			var wg sync.WaitGroup
-			// each address sent to com.downstream generates 1 tx
 			for i := 0; i < row.v; i++ {
 				select {
 				case addr := <-com.upstream:
 					select {
 					case com.downstream <- addr:
+						// For every address sent downstream (one transaction about to happen),
+						// spawn a goroutine to listen for an accepted transaction in the mempool
 						wg.Add(1)
-						go func() {
-							defer wg.Done()
-
-							select {
-							case <-com.txpool:
-							case err := <-com.txErrChan:
-								log.Printf("Tx error: %v", err)
-							case <-com.interrupt:
-							case <-com.fail:
-							case <-com.stop:
-							}
-						}()
-					case <-com.stop:
-						return
-					case <-com.fail:
-						return
-					case <-com.interrupt:
-						// Interrupt received
-						<-com.waitForInterrupt
+						go com.txPoolRecv(&wg)
+					case <-com.exit:
 						return
 					}
-				case <-com.fail:
-					return
-				case <-com.interrupt:
-					<-com.waitForInterrupt
+				case <-com.exit:
 					return
 				}
 			}
 			wg.Wait()
 			// mine the above tx in the next block
 			if err := miner.StartMining(); err != nil {
-				close(com.fail)
+				safeClose(com.exit)
 				return
 			}
-		case <-com.stop:
-			return
-		case <-com.interrupt:
-			// Interrupt received
-			<-com.waitForInterrupt
+		case <-com.exit:
 			return
 		}
 	}
 	// done with the curve, so stop the simulation
-	close(com.stop)
+	safeClose(com.exit)
 	return
 }
 
@@ -315,16 +252,9 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 func (com *Communication) Shutdown(miner *Miner, actors []*Actor, btcd *exec.Cmd) {
 	defer com.wg.Done()
 
-out:
-	for {
-		select {
-		case <-com.stop:
-			break out
-		case <-com.fail:
-			break out
-		case <-com.interrupt:
-			return
-		}
+	select {
+	case <-com.exit:
+		safeClose(com.waitForExit)
 	}
 
 	if miner != nil {
@@ -340,4 +270,25 @@ out:
 // has returned.
 func (com *Communication) WaitForShutdown() {
 	com.wg.Wait()
+}
+
+// txPoolRecv listens for transactions accepted in the miner mempool
+// or errors happened during the creation or send of a transaction.
+func (com *Communication) txPoolRecv(wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	select {
+	case <-com.txpool:
+	case <-com.exit:
+	}
+}
+
+// exitWait waits for the simulation to exit
+func (com *Communication) exitWait() {
+	defer com.wg.Done()
+
+	select {
+	case <-com.exit:
+		<-com.waitForExit
+	}
 }

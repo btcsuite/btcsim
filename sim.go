@@ -193,18 +193,12 @@ func main() {
 
 	// close actors and exit btcd on interrupt
 	addInterruptHandler(func() {
-		// ignore if already interrupted before
-		select {
-		case <-com.interrupt:
-			return
-		default:
-		}
-		close(com.interrupt)
+		safeClose(com.exit)
 		Close(actors)
 		if err := Exit(btcd); err != nil {
 			log.Printf("Cannot kill initial btcd process: %v", err)
 		}
-		close(com.waitForInterrupt)
+		safeClose(com.waitForExit)
 	})
 
 	// Start simulation.
@@ -244,4 +238,14 @@ func Close(actors []*Actor) {
 	for _, a := range actors {
 		a.Shutdown()
 	}
+}
+
+// safeClose safely closes the exit channel.
+func safeClose(exit chan struct{}) {
+	select {
+	case <-exit:
+		return
+	default:
+	}
+	close(exit)
 }

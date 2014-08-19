@@ -28,7 +28,7 @@ type Miner struct {
 
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
 // to control it.
-func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
+func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 	start chan<- struct{}, txpool chan<- struct{}) (*Miner, error) {
 
 	datadir, err := ioutil.TempDir("", "minerData")
@@ -86,7 +86,7 @@ func NewMiner(addressTable []btcutil.Address, stop chan<- struct{},
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
 			log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
 			if height == int32(*maxBlocks) {
-				close(stop)
+				safeClose(exit)
 			}
 			if height >= int32(*matureBlock) {
 				if start != nil {
