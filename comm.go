@@ -5,14 +5,18 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
 
+	"github.com/conformal/btcnet"
 	rpc "github.com/conformal/btcrpcclient"
+	"github.com/conformal/btcscript"
 	"github.com/conformal/btcutil"
+	"github.com/conformal/btcwire"
 )
 
 // Communication is consisted of the necessary primitives used
@@ -27,6 +31,8 @@ type Communication struct {
 	errChan      chan struct{}
 	start        chan struct{}
 	txpool       chan struct{}
+	enqueueBlock chan *btcwire.ShaHash
+	dequeueBlock chan *btcwire.ShaHash
 }
 
 // NewCommunication creates a new data structure with all the
@@ -40,6 +46,8 @@ func NewCommunication() *Communication {
 		exit:         make(chan struct{}),
 		waitForExit:  make(chan struct{}),
 		errChan:      make(chan struct{}, *maxActors),
+		enqueueBlock: make(chan *btcwire.ShaHash),
+		dequeueBlock: make(chan *btcwire.ShaHash),
 	}
 }
 
@@ -113,11 +121,152 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 		go com.Communicate()
 	}
 
+	com.wg.Add(1)
+	go com.queueBlocks()
+
+	com.wg.Add(1)
+	go com.poolUtxos(client, actors)
+
 	// Start a goroutine for shuting down the simulation when appropriate
 	com.wg.Add(1)
 	go com.Shutdown(miner, actors, btcd)
 
 	return
+}
+
+// queueBlocks queues blocks in the order they are received
+func (com *Communication) queueBlocks() {
+	defer com.wg.Done()
+
+	var blocks []*btcwire.ShaHash
+	enqueue := com.enqueueBlock
+	var dequeue chan *btcwire.ShaHash
+	var next *btcwire.ShaHash
+out:
+	for {
+		select {
+		case n, ok := <-enqueue:
+			if !ok {
+				// If no blocks are queued for handling,
+				// the queue is finished.
+				if len(blocks) == 0 {
+					break out
+				}
+				// nil channel so no more reads can occur.
+				enqueue = nil
+				continue
+			}
+			if len(blocks) == 0 {
+				next = n
+				dequeue = com.dequeueBlock
+			}
+			blocks = append(blocks, n)
+		case dequeue <- next:
+			blocks[0] = nil
+			blocks = blocks[1:]
+			if len(blocks) != 0 {
+				next = blocks[0]
+			} else {
+				// If no more blocks can be enqueued, the
+				// queue is finished.
+				if enqueue == nil {
+					break out
+				}
+				dequeue = nil
+			}
+		case <-com.exit:
+			break out
+		}
+	}
+	close(com.dequeueBlock)
+}
+
+// poolUtxos receives a new block notification from the chain server
+// and pools the newly mined utxos to the corresponding actor's a.utxo
+func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
+	defer com.wg.Done()
+	// Update utxo pool on each block connected
+	for {
+		select {
+		case blockHash := <-com.dequeueBlock:
+			block, err := client.GetBlock(blockHash)
+			if err != nil {
+				log.Printf("Cannot get block: %v", err)
+				return
+			}
+			// add new outputs to unspent pool
+			for i, tx := range block.Transactions() {
+			next:
+				for n, vout := range tx.MsgTx().TxOut {
+					// fetch actor who owns this output
+					actor, err := com.getActor(actors, vout)
+					if err != nil {
+						log.Printf("Cannot get actor: %v", err)
+						continue next
+					}
+					if i == 0 {
+						// in case of coinbase tx, add it to coinbase queue
+						// if the chan is full, the first tx would be mature
+						// so add it to the pool
+						select {
+						case actor.coinbase <- tx:
+							break next
+						default:
+							// dequeue the first mature tx
+							mTx := <-actor.coinbase
+							// enqueue the latest tx
+							actor.coinbase <- tx
+							// we'll process the mature tx next
+							// so point tx to mTx
+							tx = mTx
+							// reset vout as per the new tx
+							vout = tx.MsgTx().TxOut[n]
+						}
+					}
+					txout := com.getUtxo(tx, vout, uint32(n))
+					// add utxo to actor's pool
+					actor.utxo <- txout
+				}
+			}
+		case <-com.exit:
+			return
+		}
+	}
+}
+
+// getActor returns the actor to which this vout belongs to
+func (com *Communication) getActor(actors []*Actor,
+	vout *btcwire.TxOut) (*Actor, error) {
+	// get addrs which own this utxo
+	_, addrs, _, err := btcscript.ExtractPkScriptAddrs(vout.PkScript, &btcnet.SimNetParams)
+	if err != nil {
+		return nil, err
+	}
+
+	// we're expecting only 1 addr since we created a standard p2pkh tx
+	addr := addrs[0].String()
+	// find which actor this addr belongs to
+	// TODO: could probably be optimized by creating
+	// a global addr -> actor index rather than looking
+	// up each actor addrs
+	for _, actor := range actors {
+		if _, ok := actor.addrs[addr]; ok {
+			return actor, nil
+		}
+	}
+	err = errors.New("Cannot find any actor who owns this tx output")
+	return nil, err
+}
+
+// getUtxo returns a TxOut from Tx and Vout
+func (com *Communication) getUtxo(tx *btcutil.Tx,
+	vout *btcwire.TxOut, index uint32) *TxOut {
+	op := btcwire.NewOutPoint(tx.Sha(), index)
+	unspent := TxOut{
+		OutPoint: op,
+		Amount:   btcutil.Amount(vout.Value),
+	}
+	return &unspent
 }
 
 // failedActors checks for actors that aborted the simulation

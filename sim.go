@@ -151,6 +151,12 @@ func main() {
 	}
 
 	ntfnHandlers := rpc.NotificationHandlers{
+		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
+			select {
+			case com.enqueueBlock <- hash:
+			case <-com.exit:
+			}
+		},
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
 			log.Printf("CHSR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
 			com.timeReceived <- time.Now()
@@ -170,6 +176,12 @@ func main() {
 		if err := Exit(btcd); err != nil {
 			log.Printf("Cannot kill initial btcd process: %v", err)
 		}
+		return
+	}
+
+	// Register for block notifications.
+	if err := client.NotifyBlocks(); err != nil {
+		log.Printf("Cannot register for block notifications: %v", err)
 		return
 	}
 
