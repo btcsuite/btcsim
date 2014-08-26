@@ -104,10 +104,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		return errors.New("actor command previously created")
 	}
 
-	// Starting amount at 50 BTC
-	amount := btcutil.Amount(50 * btcutil.SatoshiPerBitcoin)
-	spendAfter := make(chan struct{})
-	start := true
 	connected := make(chan struct{})
 	var firstConn bool
 	const timeoutSecs int64 = 3600 * 24
@@ -140,13 +136,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 			if conn && !firstConn {
 				firstConn = true
 				connected <- struct{}{}
-			}
-		},
-		OnAccountBalance: func(account string, balance btcutil.Amount, confirmed bool) {
-			// Block actors at start until coinbase matures (equals or is more than 50 BTC).
-			if balance >= amount && start {
-				spendAfter <- struct{}{}
-				start = false
 			}
 		},
 	}
@@ -209,16 +198,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Send a random address upstream that will be used by the cpu miner.
 	a.upstream <- addressSpace[rand.Int()%a.maxAddresses]
-
-	select {
-	// Wait for matured coinbase
-	case <-spendAfter:
-		log.Println("Start spending funds")
-	case <-a.quit:
-		// If the simulation ends for any reason before the actor's coinbase
-		// matures, we don't want it to get stuck on spendAfter.
-		return nil
-	}
 
 	// Start a goroutine to send addresses upstream.
 	a.wg.Add(1)
@@ -334,6 +313,7 @@ func (a *Actor) drainChans() {
 		case <-a.downstream:
 		case <-a.upstream:
 		case <-a.txpool:
+		case <-a.utxo:
 		case <-a.errChan:
 		}
 	}
@@ -349,16 +329,6 @@ func (a *Actor) ForceShutdown() {
 	a.Stop()
 	a.WaitForShutdown()
 	a.Shutdown()
-}
-
-// isMatureCoinbase checks if a coinbase transaction has reached maturity
-func isMatureCoinbase(tx *btcjson.ListUnspentResult) bool {
-	return tx.Confirmations >= 100 && tx.Vout == 0
-}
-
-// isNotCoinbase checks if a utxo is not a coinbase
-func isNotCoinbase(tx *btcjson.ListUnspentResult) bool {
-	return tx.Vout > 0 && tx.Confirmations >= 0
 }
 
 type procArgs struct {

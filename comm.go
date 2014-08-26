@@ -391,8 +391,6 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 			return
 		}
 	}
-	// done with the curve, so stop the simulation
-	safeClose(com.exit)
 	return
 }
 
