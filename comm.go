@@ -6,12 +6,14 @@ package main
 
 import (
 	"errors"
+	"io"
 	"log"
 	"os"
 	"os/exec"
 	"sync"
 	"time"
 
+	"github.com/cheggaaa/pb"
 	"github.com/conformal/btcnet"
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcscript"
@@ -29,7 +31,7 @@ type Communication struct {
 	exit         chan struct{}
 	waitForExit  chan struct{}
 	errChan      chan struct{}
-	start        chan struct{}
+	start        chan *btcwire.ShaHash
 	txpool       chan struct{}
 	enqueueBlock chan *btcwire.ShaHash
 	dequeueBlock chan *btcwire.ShaHash
@@ -61,11 +63,16 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 	go com.exitWait()
 
 	// Start actors
+	var stdout, stderr io.Writer
+	if *verbose {
+		stdout = os.Stdout
+		stderr = os.Stderr
+	}
 	for _, a := range actors {
 		com.wg.Add(1)
 		go func(a *Actor, com *Communication) {
 			defer com.wg.Done()
-			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
+			if err := a.Start(stdout, stderr, com); err != nil {
 				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
 				a.ForceShutdown()
 			}
@@ -358,11 +365,28 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 
 	for _, row := range txCurve {
 		select {
-		case <-com.start:
+		case blockHash := <-com.start:
 			// disable mining until the required no. of tx are in mempool
 			if err := miner.StopMining(); err != nil {
 				safeClose(com.exit)
 				return
+			}
+			mPool, err := miner.client.GetRawMempool()
+			if err != nil {
+				log.Printf("Cannot get raw mempool: %v", err)
+				return
+			}
+			block, err := miner.client.GetBlockVerbose(blockHash, false)
+			if err != nil {
+				log.Printf("Cannot get block: %v", err)
+				return
+			}
+			log.Printf("Mined block: %v, Tx count: %v, Height: %v;"+
+				" Mempool size: %v", blockHash, len(block.Tx), block.Height, len(mPool))
+			log.Printf("Generating %v tx, please wait... ", row.v)
+			var bar *pb.ProgressBar
+			if !*verbose {
+				bar = pb.StartNew(row.v)
 			}
 			var wg sync.WaitGroup
 			for i := 0; i < row.v; i++ {
@@ -373,7 +397,7 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 						// For every address sent downstream (one transaction about to happen),
 						// spawn a goroutine to listen for an accepted transaction in the mempool
 						wg.Add(1)
-						go com.txPoolRecv(&wg)
+						go com.txPoolRecv(&wg, bar)
 					case <-com.exit:
 						return
 					}
@@ -382,6 +406,9 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 				}
 			}
 			wg.Wait()
+			if bar != nil {
+				bar.FinishPrint("Waiting for block...")
+			}
 			// mine the above tx in the next block
 			if err := miner.StartMining(); err != nil {
 				safeClose(com.exit)
@@ -421,11 +448,14 @@ func (com *Communication) WaitForShutdown() {
 
 // txPoolRecv listens for transactions accepted in the miner mempool
 // or errors happened during the creation or send of a transaction.
-func (com *Communication) txPoolRecv(wg *sync.WaitGroup) {
+func (com *Communication) txPoolRecv(wg *sync.WaitGroup, bar *pb.ProgressBar) {
 	defer wg.Done()
 
 	select {
 	case <-com.txpool:
+		if bar != nil {
+			bar.Increment()
+		}
 	case <-com.exit:
 	}
 }

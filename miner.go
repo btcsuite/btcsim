@@ -14,6 +14,8 @@ import (
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
 	"github.com/conformal/btcwire"
+
+	"github.com/cheggaaa/pb"
 )
 
 // Miner holds all the core features required to register, run, control,
@@ -29,7 +31,7 @@ type Miner struct {
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
 // to control it.
 func NewMiner(addressTable []btcutil.Address, exit chan struct{},
-	start chan<- struct{}, txpool chan<- struct{}) (*Miner, error) {
+	start chan<- *btcwire.ShaHash, txpool chan<- struct{}) (*Miner, error) {
 
 	datadir, err := ioutil.TempDir("", "minerData")
 	if err != nil {
@@ -79,18 +81,33 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		DisableAutoReconnect: true,
 	}
 
+	log.Printf("Mining %v blocks, please wait... ", *maxBlocks)
+
+	var bar *pb.ProgressBar
+	if !*verbose {
+		bar = pb.StartNew(*maxBlocks)
+	}
+
 	ntfnHandlers := rpc.NotificationHandlers{
 		// When a block higher than maxBlocks connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
-			log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
+			if *verbose {
+				log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
+			}
+			if bar != nil {
+				bar.Increment()
+			}
 			if height == int32(*maxBlocks) {
+				if bar != nil {
+					bar.Finish()
+				}
 				safeClose(exit)
 			}
 			if height >= int32(*matureBlock) {
 				if start != nil {
-					start <- struct{}{}
+					start <- hash
 				}
 			}
 		},
@@ -98,7 +115,9 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		// the tx curve, the receiver will need to wait until required no of tx
 		// are filled up in the mempool
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			log.Printf("MINR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
+			if *verbose {
+				log.Printf("MINR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
+			}
 			if txpool != nil {
 				// this will not be blocked because we're creating only
 				// required no of tx and receiving all of them
@@ -138,7 +157,9 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		return miner, err
 	}
 
-	log.Println("CPU mining started")
+	if *verbose {
+		log.Println("CPU mining started")
+	}
 	return miner, nil
 }
 
