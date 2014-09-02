@@ -51,7 +51,7 @@ func NewCommunication() *Communication {
 
 // Start handles the main part of a simulation by starting
 // all the necessary goroutines.
-func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.Cmd, txCurve []*Row) (tpsChan chan float64) {
+func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.Cmd, txCurve []*Row, utxoCurve []*Row) (tpsChan chan float64) {
 	tpsChan = make(chan float64, 1)
 
 	// Start actors
@@ -100,12 +100,14 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 
 	// Start a goroutine to estimate tps
 	com.wg.Add(1)
-	go com.estimateTps(tpsChan, txCurve)
+	go com.estimateTps(tpsChan, txCurve, utxoCurve)
 
 	// Start a goroutine to coordinate transactions
 	com.wg.Add(1)
 	if txCurve != nil {
 		go com.CommunicateTxCurve(txCurve, miner)
+	} else if utxoCurve != nil {
+		go com.CommunicateUtxoCurve(utxoCurve, miner)
 	} else {
 		go com.Communicate()
 	}
@@ -282,7 +284,7 @@ func (com *Communication) failedActors() {
 
 // estimateTps estimates the average transactions per second of
 // the simulation.
-func (com *Communication) estimateTps(tpsChan chan<- float64, txCurve []*Row) {
+func (com *Communication) estimateTps(tpsChan chan<- float64, txCurve []*Row, utxoCurve []*Row) {
 	defer com.wg.Done()
 
 	var first, last time.Time
@@ -381,6 +383,12 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 		}
 	}
 	return
+}
+
+// CommunicateUtxo generates utxos and controls the mining according
+// to the input block height vs cumulative utxo count curve
+func (com *Communication) CommunicateUtxoCurve(utxoCurve []*Row, miner *Miner) {
+	// TODO
 }
 
 // Shutdown shuts down the simulation by killing the mining and the
