@@ -100,10 +100,6 @@ func main() {
 	var utxoCurve []*Row
 	if *utxoCurvePath != "" {
 		var err error
-		if err = newCSV(); err != nil {
-			log.Fatalf("Error creating utxo curve CSV: %v", err)
-			return
-		}
 		utxoCurve, err = readCSV(*utxoCurvePath)
 		if err != nil {
 			log.Fatalf("Error reading utxo curve CSV: %v", err)
@@ -126,6 +122,10 @@ func main() {
 		// we need only enough blocks after matureBlock
 		// to generate the tx curve
 		*maxBlocks = *matureBlock + len(txCurve)
+	} else if utxoCurve != nil {
+		com.start = make(chan struct{})
+		com.txpool = make(chan struct{})
+		*maxBlocks = *matureBlock + len(utxoCurve)
 	}
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)

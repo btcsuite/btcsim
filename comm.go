@@ -388,7 +388,46 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 // CommunicateUtxo generates utxos and controls the mining according
 // to the input block height vs cumulative utxo count curve
 func (com *Communication) CommunicateUtxoCurve(utxoCurve []*Row, miner *Miner) {
-	// TODO
+	defer com.wg.Done()
+
+	for _, row := range utxoCurve {
+		select {
+		case <-com.start:
+			// disable mining until the required no. of utxo are generated
+			if err := miner.StopMining(); err != nil {
+				safeClose(com.exit)
+				return
+			}
+			var wg sync.WaitGroup
+			for i := 0; i < row.v; i++ {
+				select {
+				case addr := <-com.upstream:
+					select {
+					// each transaction consumes one utxo and splits it into two - so generates
+					// one net new utxo
+					case com.downstream <- addr:
+						// For every address sent downstream (one transaction about to happen),
+						// spawn a goroutine to listen for an accepted transaction in the mempool
+						wg.Add(1)
+						go com.txPoolRecv(&wg)
+					case <-com.exit:
+						return
+					}
+				case <-com.exit:
+					return
+				}
+			}
+			wg.Wait()
+			// mine the above tx in the next block
+			if err := miner.StartMining(); err != nil {
+				safeClose(com.exit)
+				return
+			}
+		case <-com.exit:
+			return
+		}
+	}
+	return
 }
 
 // Shutdown shuts down the simulation by killing the mining and the
