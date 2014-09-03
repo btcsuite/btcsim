@@ -206,14 +206,9 @@ func main() {
 		actors = append(actors, a)
 	}
 
-	// close actors and exit btcd on interrupt
+	// if we receive an interrupt, proceed to shutdown
 	addInterruptHandler(func() {
 		safeClose(com.exit)
-		Close(actors)
-		if err := Exit(btcd); err != nil {
-			log.Printf("Cannot kill initial btcd process: %v", err)
-		}
-		safeClose(com.waitForExit)
 	})
 
 	// Start simulation.

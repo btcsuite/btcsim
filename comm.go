@@ -27,7 +27,6 @@ type Communication struct {
 	downstream   chan btcutil.Address
 	timeReceived chan time.Time
 	exit         chan struct{}
-	waitForExit  chan struct{}
 	errChan      chan struct{}
 	start        chan struct{}
 	txpool       chan struct{}
@@ -44,7 +43,6 @@ func NewCommunication() *Communication {
 		downstream:   make(chan btcutil.Address, *maxActors),
 		timeReceived: make(chan time.Time, *maxActors),
 		exit:         make(chan struct{}),
-		waitForExit:  make(chan struct{}),
 		errChan:      make(chan struct{}, *maxActors),
 		enqueueBlock: make(chan *btcwire.ShaHash),
 		dequeueBlock: make(chan *btcwire.ShaHash),
@@ -55,10 +53,6 @@ func NewCommunication() *Communication {
 // all the necessary goroutines.
 func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.Cmd, txCurve []*Row) (tpsChan chan float64) {
 	tpsChan = make(chan float64, 1)
-
-	// Start a goroutine to wait for the simulation to exit
-	com.wg.Add(1)
-	go com.exitWait()
 
 	// Start actors
 	for _, a := range actors {
@@ -100,11 +94,6 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 		go com.Shutdown(miner, actors, btcd)
 		return
 	}
-
-	// cleanup the miner on interrupt
-	addInterruptHandler(func() {
-		miner.Shutdown()
-	})
 
 	// Add mining btcd listen interface as a node
 	client.AddNode("localhost:18550", rpc.ANAdd)
@@ -399,11 +388,7 @@ func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
 func (com *Communication) Shutdown(miner *Miner, actors []*Actor, btcd *exec.Cmd) {
 	defer com.wg.Done()
 
-	select {
-	case <-com.exit:
-		safeClose(com.waitForExit)
-	}
-
+	<-com.exit
 	if miner != nil {
 		miner.Shutdown()
 	}
@@ -427,15 +412,5 @@ func (com *Communication) txPoolRecv(wg *sync.WaitGroup) {
 	select {
 	case <-com.txpool:
 	case <-com.exit:
-	}
-}
-
-// exitWait waits for the simulation to exit
-func (com *Communication) exitWait() {
-	defer com.wg.Done()
-
-	select {
-	case <-com.exit:
-		<-com.waitForExit
 	}
 }
