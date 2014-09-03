@@ -41,6 +41,9 @@ var defaultChainServer = ChainServer{
 }
 
 var (
+	// verbose when enabled logs all blocks/transactions to stdout
+	verbose = flag.Bool("verbose", false, "Enable verbose logging of block and transaction data")
+
 	// maxConnRetries defines the number of times to retry rpc client connections
 	maxConnRetries = flag.Int("maxconnretries", 15, "Maximum retries to connect to rpc client")
 
@@ -100,7 +103,7 @@ func main() {
 		// start - start generating tx for next block
 		// txpool - tx has been accepted into miner mempool
 		// both are required only for generating tx curve
-		com.start = make(chan struct{})
+		com.start = make(chan *btcwire.ShaHash)
 		com.txpool = make(chan struct{})
 		// we need only enough blocks after matureBlock
 		// to generate the tx curve
@@ -161,7 +164,9 @@ func main() {
 			}
 		},
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			log.Printf("CHSR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
+			if *verbose {
+				log.Printf("CHSR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
+			}
 			com.timeReceived <- time.Now()
 		},
 	}

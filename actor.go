@@ -176,20 +176,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		break
 	}
 
-	// Create wallet addresses and unlock wallet.
-	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
-	addressSpace := make([]btcutil.Address, a.maxAddresses)
-	for i := range addressSpace {
-		addr, err := a.client.GetNewAddress()
-		if err != nil {
-			log.Printf("%s: Cannot create address #%d", rpcConf.Host, i+1)
-			a.errChan <- struct{}{}
-			return err
-		}
-		addressSpace[i] = addr
-		a.addrs[addr.String()] = struct{}{}
-	}
-
 	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
 		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
 		a.errChan <- struct{}{}
@@ -197,79 +183,114 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	}
 
 	// Send a random address upstream that will be used by the cpu miner.
-	a.upstream <- addressSpace[rand.Int()%a.maxAddresses]
+	addr, err := a.client.GetNewAddress()
+	if err != nil {
+		log.Printf("%s: Cannot create mining address", rpcConf.Host)
+		a.errChan <- struct{}{}
+		return err
+	}
+	a.addrs[addr.String()] = struct{}{}
+	a.upstream <- addr
 
 	// Start a goroutine to send addresses upstream.
 	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-
-		for {
-			select {
-			case a.upstream <- addressSpace[rand.Int()%a.maxAddresses]:
-				// Send address to upstream to request receiving a transaction.
-			case <-a.quit:
-				return
-			}
-		}
-	}()
+	go a.SendAddrs()
 
 	// Start a goroutine to send transactions.
 	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
+	go a.SendTx()
 
-		for {
+	return nil
+}
+
+// SendAddrs generates addrs and sends them upstream
+// the first a.maxAddresses addrs are generated on the fly
+// after that, addrs are sent at random
+func (a *Actor) SendAddrs() {
+	defer a.wg.Done()
+
+	var i int
+	var addr btcutil.Address
+	var err error
+	addressSpace := make([]btcutil.Address, a.maxAddresses)
+	for {
+		// if maxAddresses have not been generated yet, generate
+		// and keep an addr ready
+		if i < a.maxAddresses {
+			addr, err = a.client.GetNewAddress()
+			if err != nil {
+				log.Printf("Cannot create address #%d", i+1)
+				a.errChan <- struct{}{}
+				return
+			}
+			a.addrs[addr.String()] = struct{}{}
+			addressSpace[i] = addr
+			i++
+		} else {
+			// if we already have maxAddresses, just return a random addr
+			addr = addressSpace[rand.Int()%a.maxAddresses]
+		}
+		select {
+		case a.upstream <- addr:
+			// Send address to upstream to request receiving a transaction.
+		case <-a.quit:
+			return
+		}
+	}
+}
+
+// SendTx creates and sends tx
+func (a *Actor) SendTx() {
+	defer a.wg.Done()
+
+	for {
+		select {
+		case utxo := <-a.utxo:
 			select {
-			case utxo := <-a.utxo:
-				select {
-				case addr := <-a.downstream:
-					// Create a raw transaction
-					txid := utxo.OutPoint.Hash.String()
-					inputs := []btcjson.TransactionInput{{txid, utxo.OutPoint.Index}}
-					amounts := map[btcutil.Address]btcutil.Amount{addr: utxo.Amount - minFee}
-					msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
-					if err != nil {
-						log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
+			case addr := <-a.downstream:
+				// Create a raw transaction
+				txid := utxo.OutPoint.Hash.String()
+				inputs := []btcjson.TransactionInput{{txid, utxo.OutPoint.Index}}
+				amounts := map[btcutil.Address]btcutil.Amount{addr: utxo.Amount - minFee}
+				msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
+				if err != nil {
+					log.Printf("Cannot create raw transaction: %v", err)
+					if a.txpool != nil {
+						a.txpool <- struct{}{}
 					}
-					// sign it
-					msgTx, ok, err := a.client.SignRawTransaction(msgTx)
-					if err != nil {
-						log.Printf("%s: Cannot sign raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
+					continue
+				}
+				// sign it
+				msgTx, ok, err := a.client.SignRawTransaction(msgTx)
+				if err != nil {
+					log.Printf("Cannot sign raw transaction: %v", err)
+					if a.txpool != nil {
+						a.txpool <- struct{}{}
 					}
-					if !ok {
-						log.Printf("%s: Not all inputs have been signed", rpcConf.Host)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
+					continue
+				}
+				if !ok {
+					log.Printf("Not all inputs have been signed: %v", err)
+					if a.txpool != nil {
+						a.txpool <- struct{}{}
 					}
-					// and finally send it.
-					if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
-						log.Printf("%s: Cannot send raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
+					continue
+				}
+				// and finally send it.
+				if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
+					log.Printf("Cannot send raw transaction: %v", err)
+					if a.txpool != nil {
+						a.txpool <- struct{}{}
 					}
-				case <-a.quit:
-					return
+					continue
 				}
 			case <-a.quit:
 				return
 			}
+		case <-a.quit:
+			return
 		}
-	}()
-
-	return nil
+	}
 }
 
 // Stop closes the client and quit channel so every running goroutine
