@@ -62,6 +62,10 @@ var (
 	txCurvePath = flag.String("txcurve", "",
 		"Path to the CSV File containing <block #>, <txCount> fields")
 
+	// utxoCurvePath is the path to a CSV file containing the block vs cumulative utxo count
+	utxoCurvePath = flag.String("utxocurve", "",
+		"Path to the CSV File containing <block #>, <utxoCount> fields")
+
 	// tpb is transactions per block that will be used to generate a csv file
 	// containing <block #>, <txCount> fields
 	tpb = flag.Int("tpb", 100, "Transactions per block")
@@ -93,6 +97,19 @@ func main() {
 		}
 	}
 
+	var utxoCurve []*Row
+	if *utxoCurvePath != "" {
+		var err error
+		utxoCurve, err = readCSV(*utxoCurvePath)
+		if err != nil {
+			log.Fatalf("Error reading utxo curve CSV: %v", err)
+			return
+		}
+	}
+	if *txCurvePath != "" && *utxoCurvePath != "" {
+		log.Fatal("Both -txcurve and -utxocurve flags cannot be used together")
+	}
+
 	actors := make([]*Actor, 0, *maxActors)
 	com := NewCommunication()
 
@@ -105,6 +122,10 @@ func main() {
 		// we need only enough blocks after matureBlock
 		// to generate the tx curve
 		*maxBlocks = *matureBlock + len(txCurve)
+	} else if utxoCurve != nil {
+		com.start = make(chan struct{})
+		com.txpool = make(chan struct{})
+		*maxBlocks = *matureBlock + len(utxoCurve)
 	}
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
@@ -212,7 +233,7 @@ func main() {
 	})
 
 	// Start simulation.
-	tpsChan := com.Start(actors, client, btcd, txCurve)
+	tpsChan := com.Start(actors, client, btcd, txCurve, utxoCurve)
 	com.WaitForShutdown()
 
 	tps, ok := <-tpsChan

@@ -43,6 +43,7 @@ type Actor struct {
 	coinbase     chan *btcutil.Tx
 	wg           sync.WaitGroup
 	closed       bool
+	change       btcutil.Address
 }
 
 // TxOut is a valid tx output that can be used to generate transactions
@@ -189,6 +190,14 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		addressSpace[i] = addr
 		a.addrs[addr.String()] = struct{}{}
 	}
+	// create a change address separate from the address space
+	addr, err := a.client.GetNewAddress()
+	if err != nil {
+		log.Printf("%s: Cannot create change address", rpcConf.Host)
+		a.errChan <- struct{}{}
+		return err
+	}
+	a.change = addr
 
 	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
 		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
@@ -227,7 +236,11 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 					// Create a raw transaction
 					txid := utxo.OutPoint.Hash.String()
 					inputs := []btcjson.TransactionInput{{txid, utxo.OutPoint.Index}}
-					amounts := map[btcutil.Address]btcutil.Amount{addr: utxo.Amount - minFee}
+					// Split and return change to generate a new utxo
+					amt := btcutil.Amount(rand.Int63n(int64(utxo.Amount)))
+					ch := utxo.Amount - amt
+					amounts := map[btcutil.Address]btcutil.Amount{addr: amt - minFee,
+						a.change: ch}
 					msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
 					if err != nil {
 						log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
