@@ -237,8 +237,10 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 					txid := utxo.OutPoint.Hash.String()
 					inputs := []btcjson.TransactionInput{{txid, utxo.OutPoint.Index}}
 					// Split and return change to generate a new utxo
-					amounts := map[btcutil.Address]btcutil.Amount{addr: utxo.Amount/2 - minFee,
-						a.change: utxo.Amount / 2}
+					amt := btcutil.Amount(rand.Int63n(int64(utxo.Amount)))
+					ch := utxo.Amount - amt
+					amounts := map[btcutil.Address]btcutil.Amount{addr: amt - minFee,
+						a.change: ch}
 					msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
 					if err != nil {
 						log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
