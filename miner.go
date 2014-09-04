@@ -146,7 +146,9 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 // log directories.
 func (m *Miner) Shutdown() {
 	if !m.closed {
-		m.client.Shutdown()
+		if m.client != nil {
+			m.client.Shutdown()
+		}
 		if err := Exit(m.cmd); err != nil {
 			log.Printf("Cannot kill mining btcd process: %v", err)
 			return
