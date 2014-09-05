@@ -42,6 +42,8 @@ func NewCommunication() *Communication {
 		upstream:     make(chan btcutil.Address, *maxActors),
 		downstream:   make(chan btcutil.Address, *maxActors),
 		timeReceived: make(chan time.Time, *maxActors),
+		start:        make(chan struct{}),
+		txpool:       make(chan struct{}),
 		exit:         make(chan struct{}),
 		errChan:      make(chan struct{}, *maxActors),
 		enqueueBlock: make(chan *btcwire.ShaHash),
@@ -104,11 +106,7 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 
 	// Start a goroutine to coordinate transactions
 	com.wg.Add(1)
-	if txCurve != nil {
-		go com.CommunicateTxCurve(txCurve, miner)
-	} else {
-		go com.Communicate()
-	}
+	go com.Communicate(txCurve, miner)
 
 	com.wg.Add(1)
 	go com.queueBlocks()
@@ -300,18 +298,15 @@ func (com *Communication) estimateTps(tpsChan chan<- float64, txCurve []*Row) {
 			txnCount++
 			diff = last.Sub(first)
 
-			// Controlled mining simulation
-			if txCurve != nil {
-				curveCount++
-				if curveCount == txCurve[block].v {
-					// A block has been mined; reset necessary variables
-					curveCount = 0
-					firstTx = true
-					curveDiff += diff
-					diff = curveDiff
-					// Use next block's desired transaction count
-					block++
-				}
+			curveCount++
+			if curveCount == txCurve[block].v {
+				// A block has been mined; reset necessary variables
+				curveCount = 0
+				firstTx = true
+				curveDiff += diff
+				diff = curveDiff
+				// Use next block's desired transaction count
+				block++
 			}
 		case <-com.exit:
 			tpsChan <- float64(txnCount) / diff.Seconds()
@@ -320,29 +315,9 @@ func (com *Communication) estimateTps(tpsChan chan<- float64, txCurve []*Row) {
 	}
 }
 
-// Communicate handles the main part of the communication; receiving
-// and sending of addresses to actors ie. enables transactions to
-// happen.
-func (com *Communication) Communicate() {
-	defer com.wg.Done()
-
-	for {
-		select {
-		case addr := <-com.upstream:
-			select {
-			case com.downstream <- addr:
-			case <-com.exit:
-				return
-			}
-		case <-com.exit:
-			return
-		}
-	}
-}
-
-// CommunicateTxCurve generates tx and controls the mining according
+// Communicate generates tx and controls the mining according
 // to the input block height vs tx count curve
-func (com *Communication) CommunicateTxCurve(txCurve []*Row, miner *Miner) {
+func (com *Communication) Communicate(txCurve []*Row, miner *Miner) {
 	defer com.wg.Done()
 
 	for _, row := range txCurve {

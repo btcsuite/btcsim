@@ -6,6 +6,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
@@ -75,37 +76,30 @@ func init() {
 }
 
 func main() {
+	if *txCurvePath == "" {
+		fmt.Println("Usage: btcsim -txcurve {.csv} [{other flags}]")
+		flag.PrintDefaults()
+		os.Exit(0)
+	}
 	// txCurve is a slice of Rows, each corresponding
 	// to a row in the input CSV file
-	// if txCurve is not nil, we control mining so as to
-	// get the same block vs tx count as the input curve
 	var txCurve []*Row
-	if *txCurvePath != "" {
-		var err error
-		if err = newCSV(); err != nil {
-			log.Fatalf("Error creating tx curve CSV: %v", err)
-			return
-		}
-		txCurve, err = readCSV(*txCurvePath)
-		if err != nil {
-			log.Fatalf("Error reading tx curve CSV: %v", err)
-			return
-		}
+	var err error
+	if err = newCSV(); err != nil {
+		log.Fatalf("Error creating tx curve CSV: %v", err)
+		return
+	}
+	txCurve, err = readCSV(*txCurvePath)
+	if err != nil {
+		log.Fatalf("Error reading tx curve CSV: %v", err)
+		return
 	}
 
 	actors := make([]*Actor, 0, *maxActors)
 	com := NewCommunication()
-
-	if txCurve != nil {
-		// start - start generating tx for next block
-		// txpool - tx has been accepted into miner mempool
-		// both are required only for generating tx curve
-		com.start = make(chan struct{})
-		com.txpool = make(chan struct{})
-		// we need only enough blocks after matureBlock
-		// to generate the tx curve
-		*maxBlocks = *matureBlock + len(txCurve)
-	}
+	// we need only enough blocks after matureBlock
+	// to generate the tx curve
+	*maxBlocks = *matureBlock + len(txCurve)
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
 	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
