@@ -6,9 +6,9 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -32,9 +32,7 @@ type ChainServer struct {
 	cert     []byte
 }
 
-// For now, hardcode a single already-running btcd connection that is used for
-// each actor. This should be changed to start a new btcd with the --simnet
-// flag, and each actor can connect to the spawned btcd process.
+// default server arguments
 var defaultChainServer = ChainServer{
 	connect: "localhost:18556", // local simnet btcd
 	user:    "rpcuser",
@@ -54,18 +52,28 @@ var (
 
 	// matureBlock defines after which block the blockchain is mature enough to start
 	// controlled mining as per the tx curve
-	matureBlock = flag.Int("matureblock", 16200, "Block number at blockchain maturity")
+	matureBlock = flag.Int("matureblock", 20000, "Block number at blockchain maturity")
 
 	// maxAddresses defines the number of addresses to generate per actor
-	maxAddresses = flag.Int("maxaddresses", 1000, "Maximum addresses per actor")
+	maxAddresses = flag.Int("maxaddresses", 100, "Maximum addresses per actor")
 
-	// txCurvePath is the path to a CSV file containing the block vs no. of transactions curve
+	// maxBlockSize defines the maximum block size to be passed as -blockmaxsize to the miner
+	maxBlockSize = flag.Int("maxblocksize", 999000, "Maximum block size used by the miner")
+
+	// txCurvePath is the path to a CSV file containing the block, utxo count, tx count
 	txCurvePath = flag.String("txcurve", "",
-		"Path to the CSV File containing <block #>, <txCount> fields")
+		"Path to the CSV File containing block, utxo count, tx count fields")
+)
 
-	// tpb is transactions per block that will be used to generate a csv file
-	// containing <block #>, <txCount> fields
-	tpb = flag.Int("tpb", 100, "Transactions per block")
+const (
+	// SimRows is the number of rows in the default curve
+	SimRows = 10
+
+	// SimUtxoCount is the starting number of utxos in the default curve
+	SimUtxoCount = 2000
+
+	// SimTxCount is the starting number of tx in the default curve
+	SimTxCount = 1000
 )
 
 func init() {
@@ -76,23 +84,36 @@ func init() {
 }
 
 func main() {
-	if *txCurvePath == "" {
-		fmt.Println("Usage: btcsim -txcurve {.csv} [{other flags}]")
-		flag.PrintDefaults()
-		os.Exit(0)
-	}
+	var txCurve map[int32]*Row
 	// txCurve is a slice of Rows, each corresponding
 	// to a row in the input CSV file
-	var txCurve []*Row
-	var err error
-	if err = newCSV(); err != nil {
-		log.Fatalf("Error creating tx curve CSV: %v", err)
-		return
+	// if txCurve is not nil, we control mining so as to
+	// get the same block vs tx count as the input curve
+	if *txCurvePath == "" {
+		// if -txcurve argument is omitted, use a simple
+		// linear simulation curve as the default
+		txCurve = make(map[int32]*Row, SimRows)
+		for i := 1; i < *matureBlock+SimRows; i++ {
+			block := int32(*matureBlock + i)
+			txCurve[block] = &Row{
+				utxoCount: i * SimUtxoCount,
+				txCount:   i * SimTxCount,
+			}
+		}
+	} else {
+		var err error
+		txCurve, err = readCSV(*txCurvePath)
+		if err != nil {
+			log.Fatalf("Error reading tx curve CSV: %v", err)
+			return
+		}
 	}
-	txCurve, err = readCSV(*txCurvePath)
-	if err != nil {
-		log.Fatalf("Error reading tx curve CSV: %v", err)
-		return
+	// set min block number from the curve as matureBlock
+	for k := range txCurve {
+		block := int(k)
+		if block < *matureBlock {
+			*matureBlock = block
+		}
 	}
 
 	actors := make([]*Actor, 0, *maxActors)
@@ -149,13 +170,16 @@ func main() {
 
 	ntfnHandlers := rpc.NotificationHandlers{
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
+			block := &Block{
+				hash:   hash,
+				height: height,
+			}
 			select {
-			case com.enqueueBlock <- hash:
+			case com.blockQueue.enqueue <- block:
 			case <-com.exit:
 			}
 		},
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			log.Printf("CHSR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
 			com.timeReceived <- time.Now()
 		},
 	}
@@ -206,12 +230,17 @@ func main() {
 	})
 
 	// Start simulation.
-	tpsChan := com.Start(actors, client, btcd, txCurve)
+	tpsChan, tpbChan := com.Start(actors, client, btcd, txCurve)
 	com.WaitForShutdown()
 
 	tps, ok := <-tpsChan
-	if ok {
+	if ok && !math.IsNaN(tps) {
 		log.Printf("Average transactions per sec: %.2f", tps)
+	}
+
+	tpb, ok := <-tpbChan
+	if ok && tpb > 0 {
+		log.Printf("Maximum transactions per block: %v", tpb)
 	}
 }
 
@@ -227,21 +256,6 @@ func Exit(cmd *exec.Cmd) (err error) {
 	}
 
 	return
-}
-
-// Close sends close signal to actors, waits for actor goroutines
-// to exit and then shuts down all actors.
-func Close(actors []*Actor) {
-	// Stop actors by shuting down their rpc client and closing quit channel.
-	for _, a := range actors {
-		a.Stop()
-		a.WaitForShutdown()
-	}
-
-	// shutdown only after all actors have stopped
-	for _, a := range actors {
-		a.Shutdown()
-	}
 }
 
 // safeClose safely closes the exit channel.

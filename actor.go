@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/conformal/btcchain"
 	"github.com/conformal/btcjson"
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
@@ -26,23 +25,27 @@ import (
 // minFee is the minimum tx fee that can be paid
 const minFee btcutil.Amount = 1e4 // 0.0001 BTC
 
+// utxoQueue is the queue of utxos belonging to a actor
+// utxos are queued after a block is received and are dispatched
+// to their respective owner from com.poolUtxos
+// they are dequeued from simulateTx and splitUtxos
+type utxoQueue struct {
+	utxos   []*TxOut
+	enqueue chan *TxOut
+	dequeue chan *TxOut
+}
+
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
 type Actor struct {
-	args         procArgs
-	cmd          *exec.Cmd
-	client       *rpc.Client
-	maxAddresses int
-	addrs        map[string]struct{}
-	downstream   chan btcutil.Address
-	upstream     chan btcutil.Address
-	txpool       chan struct{}
-	errChan      chan struct{}
-	quit         chan struct{}
-	utxo         chan *TxOut
-	coinbase     chan *btcutil.Tx
-	wg           sync.WaitGroup
-	closed       bool
+	args           procArgs
+	cmd            *exec.Cmd
+	client         *rpc.Client
+	quit           chan struct{}
+	wg             sync.WaitGroup
+	ownedAddresses []btcutil.Address
+	utxoQueue      *utxoQueue
+	miningAddr     chan btcutil.Address
 }
 
 // TxOut is a valid tx output that can be used to generate transactions
@@ -72,11 +75,13 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 			port:             strconv.FormatUint(uint64(port), 10),
 			walletPassphrase: "walletpass",
 		},
-		coinbase:     make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
-		addrs:        make(map[string]struct{}),
-		maxAddresses: *maxAddresses,
-		quit:         make(chan struct{}),
-		utxo:         make(chan *TxOut),
+		quit:           make(chan struct{}),
+		ownedAddresses: make([]btcutil.Address, *maxAddresses),
+		miningAddr:     make(chan btcutil.Address),
+		utxoQueue: &utxoQueue{
+			enqueue: make(chan *TxOut),
+			dequeue: make(chan *TxOut),
+		},
 	}
 	return &a, nil
 }
@@ -93,14 +98,9 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 // be created, the wallet process is killed and the actor directory
 // removed.
 func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
-	a.downstream = com.downstream
-	a.upstream = com.upstream
-	a.errChan = com.errChan
-	a.txpool = com.txpool
-
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return errors.New("actor command previously created")
 	}
 
@@ -117,7 +117,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 			log.Printf("Cannot remove actor directory after "+
 				"failed start of wallet process: %v", err)
 		}
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return err
 	}
 
@@ -154,7 +154,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		break
 	}
 	if a.client == nil {
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return connErr
 	}
 
@@ -163,7 +163,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Create the wallet.
 	if err := a.client.CreateEncryptedWallet(a.args.walletPassphrase); err != nil {
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return err
 	}
 
@@ -178,109 +178,236 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Create wallet addresses and unlock wallet.
 	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
-	addressSpace := make([]btcutil.Address, a.maxAddresses)
-	for i := range addressSpace {
+	for i := range a.ownedAddresses {
 		addr, err := a.client.GetNewAddress()
 		if err != nil {
 			log.Printf("%s: Cannot create address #%d", rpcConf.Host, i+1)
-			a.errChan <- struct{}{}
+			com.errChan <- struct{}{}
 			return err
 		}
-		addressSpace[i] = addr
-		a.addrs[addr.String()] = struct{}{}
+		a.ownedAddresses[i] = addr
 	}
 
 	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
 		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return err
 	}
 
-	// Send a random address upstream that will be used by the cpu miner.
-	a.upstream <- addressSpace[rand.Int()%a.maxAddresses]
+	// Send a random address that will be used by the cpu miner.
+	a.miningAddr <- a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
 
-	// Start a goroutine to send addresses upstream.
+	// Start a goroutine that queues up a set of utxos belonging to this
+	// actor. The utxos are sent from com.poolUtxos which in turn receives
+	// block notifications from sim.go
 	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
+	go a.queueUtxos()
 
-		for {
-			select {
-			case a.upstream <- addressSpace[rand.Int()%a.maxAddresses]:
-				// Send address to upstream to request receiving a transaction.
-			case <-a.quit:
-				return
-			}
-		}
-	}()
-
-	// Start a goroutine to send transactions.
+	// Start a goroutine to simulate transactions.
 	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
+	go a.simulateTx(com.downstream, com.txpool)
 
-		for {
-			select {
-			case utxo := <-a.utxo:
-				select {
-				case addr := <-a.downstream:
-					// Create a raw transaction
-					txid := utxo.OutPoint.Hash.String()
-					inputs := []btcjson.TransactionInput{{txid, utxo.OutPoint.Index}}
-					amounts := map[btcutil.Address]btcutil.Amount{addr: utxo.Amount - minFee}
-					msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
-					if err != nil {
-						log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
-					}
-					// sign it
-					msgTx, ok, err := a.client.SignRawTransaction(msgTx)
-					if err != nil {
-						log.Printf("%s: Cannot sign raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
-					}
-					if !ok {
-						log.Printf("%s: Not all inputs have been signed", rpcConf.Host)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
-					}
-					// and finally send it.
-					if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
-						log.Printf("%s: Cannot send raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
-					}
-				case <-a.quit:
-					return
-				}
-			case <-a.quit:
-				return
-			}
-		}
-	}()
+	// Start a goroutine to split utxos
+	a.wg.Add(1)
+	go a.splitUtxos(com.split, com.txpool)
 
 	return nil
 }
 
-// Stop closes the client and quit channel so every running goroutine
-// can return or just exits if quit has already been closed.
-func (a *Actor) Stop() {
+// simulateTx runs as a goroutine and simulates transactions between actors
+//
+// It receives a random address downstream, dequeues a utxo, sends a raw
+// transaction to the address using the utxo as input
+func (a *Actor) simulateTx(downstream <-chan btcutil.Address, txpool chan<- struct{}) {
+	defer a.wg.Done()
+
+	for {
+		select {
+		case utxo := <-a.utxoQueue.dequeue:
+			select {
+			case addr := <-downstream:
+				// Create a raw transaction
+				inputs := []btcjson.TransactionInput{{
+					Txid: utxo.OutPoint.Hash.String(),
+					Vout: utxo.OutPoint.Index,
+				}}
+
+				// Provide a fees of minFee to ensure the tx gets mined
+				amt := utxo.Amount - minFee
+				amounts := map[btcutil.Address]btcutil.Amount{
+					addr: amt,
+				}
+
+				err := a.sendRawTransaction(inputs, amounts)
+				if err != nil {
+					log.Printf("error sending raw transaction: %v", err)
+					select {
+					case txpool <- struct{}{}:
+					case <-a.quit:
+						return
+					}
+					continue
+				}
+
+			case <-a.quit:
+				return
+			}
+		case <-a.quit:
+			return
+		}
+	}
+}
+
+// splitUtxos runs as a goroutine and builds up a large set of utxos that
+// can be used to simulate large tx/block ratios
+//
+// It receives a 'split' which is int that indicates the number of resultant utxos
+// the tx is sent to addresses from the same actor since we're only interested in
+// building up the utxo set
+func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
+	defer a.wg.Done()
+
+	for {
+		select {
+		case utxo := <-a.utxoQueue.dequeue:
+			select {
+			case split := <-split:
+				// Create a raw transaction
+				inputs := []btcjson.TransactionInput{{
+					Txid: utxo.OutPoint.Hash.String(),
+					Vout: utxo.OutPoint.Index,
+				}}
+
+				// Provide a fees of minFee to ensure the tx gets mined
+				amt := utxo.Amount - minFee
+				amounts := map[btcutil.Address]btcutil.Amount{}
+
+				// Create a output of random amount and sent it
+				// to a random address from the address space
+				// Iteration is split+1 times taking into account this utxo
+				// which is consumed in the process
+				for i := 0; i < split+1; i++ {
+					// skip if this amt can't be split any further
+					if amt > minFee {
+						// pick a random address
+						to := a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
+						// pick a random change amount which is less than amt
+						// but have a lower bound at minFee
+						change := btcutil.Amount(rand.Int63n(int64(amt) / 2))
+						if change < minFee {
+							change = minFee
+						}
+						amounts[to] = change
+						amt -= change
+					}
+				}
+
+				err := a.sendRawTransaction(inputs, amounts)
+				if err != nil {
+					log.Printf("error sending raw transaction: %v", err)
+					select {
+					case txpool <- struct{}{}:
+					case <-a.quit:
+						return
+					}
+					continue
+				}
+
+			case <-a.quit:
+				return
+			}
+		case <-a.quit:
+			return
+		}
+	}
+}
+
+// sendRawTransaction creates a raw transaction, signs it and sends it
+func (a *Actor) sendRawTransaction(inputs []btcjson.TransactionInput, amounts map[btcutil.Address]btcutil.Amount) error {
+	msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
+	if err != nil {
+		return err
+	}
+	// sign it
+	msgTx, ok, err := a.client.SignRawTransaction(msgTx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return err
+	}
+	// and finally send it.
+	if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
+		return err
+	}
+	return nil
+}
+
+// queueUtxos receives utxos belonging to this actor and queues them up
+func (a *Actor) queueUtxos() {
+	defer a.wg.Done()
+
+	enqueue := a.utxoQueue.enqueue
+	var dequeue chan *TxOut
+	var next *TxOut
+out:
+	for {
+		select {
+		case n, ok := <-enqueue:
+			if !ok {
+				// If no utxos are queued for handling,
+				// the queue is finished.
+				if len(a.utxoQueue.utxos) == 0 {
+					break out
+				}
+				// nil channel so no more reads can occur.
+				enqueue = nil
+				continue
+			}
+			if len(a.utxoQueue.utxos) == 0 {
+				next = n
+				dequeue = a.utxoQueue.dequeue
+			}
+			a.utxoQueue.utxos = append(a.utxoQueue.utxos, n)
+		case dequeue <- next:
+			a.utxoQueue.utxos[0] = nil
+			a.utxoQueue.utxos = a.utxoQueue.utxos[1:]
+			if len(a.utxoQueue.utxos) != 0 {
+				next = a.utxoQueue.utxos[0]
+			} else {
+				// If no more utxos can be enqueued, the
+				// queue is finished.
+				if enqueue == nil {
+					break out
+				}
+				dequeue = nil
+			}
+		case <-a.quit:
+			break out
+		}
+	}
+	close(a.utxoQueue.dequeue)
+}
+
+// Shutdown performs a shutdown down the actor by first signalling
+// all goroutines to stop, waiting for them to stop and them cleaning up
+func (a *Actor) Shutdown() {
 	select {
 	case <-a.quit:
 	default:
-		go a.drainChans()
-		a.client.Shutdown()
 		close(a.quit)
+		go a.drainChans()
+		a.WaitForShutdown()
+		if a.client != nil {
+			a.client.Shutdown()
+		}
+		if err := Exit(a.cmd); err != nil {
+			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
+		}
+		if err := a.Cleanup(); err != nil {
+			log.Printf("Cannot cleanup actor directory on %s: %v", "localhost:"+a.args.port, err)
+		}
+		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
 	}
 }
 
@@ -289,32 +416,11 @@ func (a *Actor) WaitForShutdown() {
 	a.wg.Wait()
 }
 
-// Shutdown kills the actor btcwallet process and removes its data directories.
-func (a *Actor) Shutdown() {
-	if !a.closed {
-		a.client.Shutdown()
-		if err := Exit(a.cmd); err != nil {
-			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
-		}
-		if err := a.Cleanup(); err != nil {
-			log.Printf("Cannot cleanup actor directory on %s: %v", "localhost:"+a.args.port, err)
-		}
-		a.closed = true
-		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
-	} else {
-		log.Printf("Actor on %s already shutdown", "localhost:"+a.args.port)
-	}
-}
-
 // drainChans drains all chans that might block an actor from shutting down
 func (a *Actor) drainChans() {
 	for {
 		select {
-		case <-a.downstream:
-		case <-a.upstream:
-		case <-a.txpool:
-		case <-a.utxo:
-		case <-a.errChan:
+		case <-a.utxoQueue.dequeue:
 		}
 	}
 }
@@ -322,13 +428,6 @@ func (a *Actor) drainChans() {
 // Cleanup removes the directory an Actor's wallet process was previously using.
 func (a *Actor) Cleanup() error {
 	return os.RemoveAll(a.args.dir)
-}
-
-// ForceShutdown shutdowns an actor that unexpectedly exited a.Start
-func (a *Actor) ForceShutdown() {
-	a.Stop()
-	a.WaitForShutdown()
-	a.Shutdown()
 }
 
 type procArgs struct {
