@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -29,7 +30,7 @@ type Miner struct {
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
 // to control it.
 func NewMiner(addressTable []btcutil.Address, exit chan struct{},
-	start chan<- struct{}, txpool chan<- struct{}) (*Miner, error) {
+	height chan<- int32, txpool chan<- struct{}) (*Miner, error) {
 
 	datadir, err := ioutil.TempDir("", "minerData")
 	if err != nil {
@@ -56,7 +57,7 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		"--listen=:18550",
 		"--rpclisten=:18551",
 		"--generate",
-		"--blockmaxsize=999000",
+		fmt.Sprintf("--blockmaxsize=%d", *maxBlockSize),
 	}
 
 	for _, addr := range addressTable {
@@ -83,14 +84,15 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		// When a block higher than maxBlocks connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
-		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
-			log.Printf("Block connected: Hash: %v, Height: %v", hash, height)
-			if height == int32(*maxBlocks) {
+		OnBlockConnected: func(hash *btcwire.ShaHash, h int32) {
+			fmt.Printf("+")
+			if h == int32(*maxBlocks) {
 				safeClose(exit)
 			}
-			if height >= int32(*matureBlock) {
-				if start != nil {
-					start <- struct{}{}
+			if h >= int32(*matureBlock)-1 {
+				fmt.Printf("\n")
+				if height != nil {
+					height <- h
 				}
 			}
 		},
@@ -98,7 +100,7 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		// the tx curve, the receiver will need to wait until required no of tx
 		// are filled up in the mempool
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			log.Printf("MINR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
+			fmt.Printf(".")
 			if txpool != nil {
 				// this will not be blocked because we're creating only
 				// required no of tx and receiving all of them
@@ -138,7 +140,7 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		return miner, err
 	}
 
-	log.Println("CPU mining started")
+	log.Printf("Generating %v blocks...", *matureBlock)
 	return miner, nil
 }
 
@@ -146,7 +148,9 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 // log directories.
 func (m *Miner) Shutdown() {
 	if !m.closed {
-		m.client.Shutdown()
+		if m.client != nil {
+			m.client.Shutdown()
+		}
 		if err := Exit(m.cmd); err != nil {
 			log.Printf("Cannot kill mining btcd process: %v", err)
 			return

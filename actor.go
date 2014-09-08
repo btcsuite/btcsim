@@ -34,21 +34,34 @@ type Actor struct {
 	client       *rpc.Client
 	maxAddresses int
 	addrs        map[string]struct{}
-	downstream   chan btcutil.Address
+	downstream   chan TxSplit
 	upstream     chan btcutil.Address
 	txpool       chan struct{}
 	errChan      chan struct{}
 	quit         chan struct{}
-	utxo         chan *TxOut
 	coinbase     chan *btcutil.Tx
 	wg           sync.WaitGroup
 	closed       bool
+	utxos        []*TxOut
+	enqueueUtxo  chan *TxOut
+	dequeueUtxo  chan *TxOut
+	change       btcutil.Address
 }
 
 // TxOut is a valid tx output that can be used to generate transactions
 type TxOut struct {
 	OutPoint *btcwire.OutPoint
 	Amount   btcutil.Amount
+}
+
+// TxSplit includes the address to which a tx should be sent
+// and the number of 'splits' to split the change and return it
+//
+// This is used to build up a large set of utxos that can be used
+// to simulate large tx/block ratios
+type TxSplit struct {
+	address btcutil.Address
+	split   int
 }
 
 // NewActor creates a new actor which runs its own wallet process connecting
@@ -76,7 +89,8 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 		addrs:        make(map[string]struct{}),
 		maxAddresses: *maxAddresses,
 		quit:         make(chan struct{}),
-		utxo:         make(chan *TxOut),
+		enqueueUtxo:  make(chan *TxOut),
+		dequeueUtxo:  make(chan *TxOut),
 	}
 	return &a, nil
 }
@@ -214,6 +228,12 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		}
 	}()
 
+	// Start a goroutine that queues up a set of utxos belonging to this
+	// actor. The utxos are sent from com.poolUtxos which in turn receives
+	// block notifications from sim.go
+	a.wg.Add(1)
+	go a.queueUtxos()
+
 	// Start a goroutine to send transactions.
 	a.wg.Add(1)
 	go func() {
@@ -221,13 +241,37 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 		for {
 			select {
-			case utxo := <-a.utxo:
+			case utxo := <-a.dequeueUtxo:
 				select {
-				case addr := <-a.downstream:
+				case txsplit := <-a.downstream:
 					// Create a raw transaction
 					txid := utxo.OutPoint.Hash.String()
 					inputs := []btcjson.TransactionInput{{txid, utxo.OutPoint.Index}}
-					amounts := map[btcutil.Address]btcutil.Amount{addr: utxo.Amount - minFee}
+
+					// Provide a fees of minFee to ensure the tx gets mined
+					amt := utxo.Amount - minFee
+					amounts := map[btcutil.Address]btcutil.Amount{}
+
+					// For each 'split', create a output of random amount and sent it
+					// to a random address from the address space
+					for i := 0; i < txsplit.split; i++ {
+						// skip if this amt can't be split any further
+						if amt > minFee {
+							// pick a random address
+							to := addressSpace[rand.Int()%a.maxAddresses]
+							// pick a random change amount which is less than amt
+							// but have a lower bound at minFee
+							change := btcutil.Amount(rand.Int63n(int64(amt) / 2))
+							if change < minFee {
+								change = minFee
+							}
+							amounts[to] = change
+							amt -= change
+						}
+					}
+					// Send the remaining amount to the address received downstream
+					amounts[txsplit.address] = amt
+
 					msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
 					if err != nil {
 						log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
@@ -272,6 +316,52 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	return nil
 }
 
+// queueUtxos receives utxos belonging to this actor and queues them up
+func (a *Actor) queueUtxos() {
+	defer a.wg.Done()
+
+	enqueue := a.enqueueUtxo
+	var dequeue chan *TxOut
+	var next *TxOut
+out:
+	for {
+		select {
+		case n, ok := <-enqueue:
+			if !ok {
+				// If no a.utxos are queued for handling,
+				// the queue is finished.
+				if len(a.utxos) == 0 {
+					break out
+				}
+				// nil channel so no more reads can occur.
+				enqueue = nil
+				continue
+			}
+			if len(a.utxos) == 0 {
+				next = n
+				dequeue = a.dequeueUtxo
+			}
+			a.utxos = append(a.utxos, n)
+		case dequeue <- next:
+			a.utxos[0] = nil
+			a.utxos = a.utxos[1:]
+			if len(a.utxos) != 0 {
+				next = a.utxos[0]
+			} else {
+				// If no more a.utxos can be enqueued, the
+				// queue is finished.
+				if enqueue == nil {
+					break out
+				}
+				dequeue = nil
+			}
+		case <-a.quit:
+			break out
+		}
+	}
+	close(a.dequeueUtxo)
+}
+
 // Stop closes the client and quit channel so every running goroutine
 // can return or just exits if quit has already been closed.
 func (a *Actor) Stop() {
@@ -313,7 +403,7 @@ func (a *Actor) drainChans() {
 		case <-a.downstream:
 		case <-a.upstream:
 		case <-a.txpool:
-		case <-a.utxo:
+		case <-a.dequeueUtxo:
 		case <-a.errChan:
 		}
 	}

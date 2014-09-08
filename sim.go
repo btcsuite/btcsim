@@ -57,11 +57,14 @@ var (
 	matureBlock = flag.Int("matureblock", 16200, "Block number at blockchain maturity")
 
 	// maxAddresses defines the number of addresses to generate per actor
-	maxAddresses = flag.Int("maxaddresses", 1000, "Maximum addresses per actor")
+	maxAddresses = flag.Int("maxaddresses", 100, "Maximum addresses per actor")
 
-	// txCurvePath is the path to a CSV file containing the block vs no. of transactions curve
-	txCurvePath = flag.String("txcurve", "",
-		"Path to the CSV File containing <block #>, <txCount> fields")
+	// maxBlockSize defines the maximum block size to be passed as -blockmaxsize to the miner
+	maxBlockSize = flag.Int("maxblocksize", 999000, "Maximum block size used by the miner")
+
+	// txCurvePath is the path to a CSV file containing the block, utxo count, tx count
+	txCurvePath = flag.String("txcurve", "tx-curve-linear.csv",
+		"Path to the CSV File containing block, utxo count, tx count fields")
 
 	// tpb is transactions per block that will be used to generate a csv file
 	// containing <block #>, <txCount> fields
@@ -83,16 +86,16 @@ func main() {
 	}
 	// txCurve is a slice of Rows, each corresponding
 	// to a row in the input CSV file
-	var txCurve []*Row
-	var err error
-	if err = newCSV(); err != nil {
-		log.Fatalf("Error creating tx curve CSV: %v", err)
-		return
-	}
-	txCurve, err = readCSV(*txCurvePath)
-	if err != nil {
-		log.Fatalf("Error reading tx curve CSV: %v", err)
-		return
+	// if txCurve is not nil, we control mining so as to
+	// get the same block vs tx count as the input curve
+	var txCurve map[int32]*Row
+	if *txCurvePath != "" {
+		var err error
+		txCurve, err = readCSV(*txCurvePath)
+		if err != nil {
+			log.Fatalf("Error reading tx curve CSV: %v", err)
+			return
+		}
 	}
 
 	actors := make([]*Actor, 0, *maxActors)
@@ -149,13 +152,16 @@ func main() {
 
 	ntfnHandlers := rpc.NotificationHandlers{
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
+			block := &Block{
+				hash:   hash,
+				height: height,
+			}
 			select {
-			case com.enqueueBlock <- hash:
+			case com.enqueueBlock <- block:
 			case <-com.exit:
 			}
 		},
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			log.Printf("CHSR: Transaction accepted: Hash: %v, Amount: %v", hash, amount)
 			com.timeReceived <- time.Now()
 		},
 	}
