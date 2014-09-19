@@ -192,15 +192,15 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Create wallet addresses and unlock wallet.
 	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
-	addressSpace := make([]btcutil.Address, a.maxAddresses)
-	for i := range addressSpace {
+	ownedAddresses := make([]btcutil.Address, a.maxAddresses)
+	for i := range ownedAddresses {
 		addr, err := a.client.GetNewAddress()
 		if err != nil {
 			log.Printf("%s: Cannot create address #%d", rpcConf.Host, i+1)
 			a.errChan <- struct{}{}
 			return err
 		}
-		addressSpace[i] = addr
+		ownedAddresses[i] = addr
 		a.addrs[addr.String()] = struct{}{}
 	}
 
@@ -211,7 +211,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	}
 
 	// Send a random address upstream that will be used by the cpu miner.
-	a.upstream <- addressSpace[rand.Int()%a.maxAddresses]
+	a.upstream <- ownedAddresses[rand.Int()%a.maxAddresses]
 
 	// Start a goroutine to send addresses upstream.
 	a.wg.Add(1)
@@ -220,7 +220,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 		for {
 			select {
-			case a.upstream <- addressSpace[rand.Int()%a.maxAddresses]:
+			case a.upstream <- ownedAddresses[rand.Int()%a.maxAddresses]:
 				// Send address to upstream to request receiving a transaction.
 			case <-a.quit:
 				return
@@ -258,7 +258,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 						// skip if this amt can't be split any further
 						if amt > minFee {
 							// pick a random address
-							to := addressSpace[rand.Int()%a.maxAddresses]
+							to := ownedAddresses[rand.Int()%a.maxAddresses]
 							// pick a random change amount which is less than amt
 							// but have a lower bound at minFee
 							change := btcutil.Amount(rand.Int63n(int64(amt) / 2))
