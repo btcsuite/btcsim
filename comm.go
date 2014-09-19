@@ -238,7 +238,11 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 				}
 				log.Printf("%v: block# %v: no of tx: %v, no of utxos: %v", b.height,
 					b.hash, len(block.Transactions()), utxoCount)
-				com.processed <- b
+				select {
+				case com.processed <- b:
+				case <-com.exit:
+					return
+				}
 			}
 		case <-com.exit:
 			return
