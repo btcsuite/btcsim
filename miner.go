@@ -140,7 +140,7 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		return miner, err
 	}
 
-	log.Printf("Generating %v blocks...", *matureBlock)
+	log.Printf("Generating %v blocks ...", *matureBlock)
 	return miner, nil
 }
 

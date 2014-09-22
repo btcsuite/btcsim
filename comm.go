@@ -425,7 +425,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			// no of utxos
 			reqTxCount := row.txCount
 			if reqTxCount > utxoCount {
-				log.Printf("Warning: capping no of tx at %v based on no of available utxos", utxoCount)
+				log.Printf("Warning: capping no of transactions at %v based on no of available utxos", utxoCount)
 				// cap the total no of tx at the no of available utxos
 				reqTxCount = utxoCount
 			}
@@ -444,9 +444,9 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 				}
 			}
 
-			log.Printf("=== row: %v === next block utxos: %v === tx: %v", h, next.utxoCount, row.txCount)
+			log.Printf("=== row: %v === next block utxos: %v === transactions: %v", h, next.utxoCount, row.txCount)
 
-			log.Printf("Generating %v tx", totalTx)
+			log.Printf("Generating %v transactions ...", totalTx)
 			for i := 0; i < totalTx; i++ {
 				select {
 				case addr := <-com.upstream:
@@ -465,7 +465,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			}
 
 			fmt.Printf("\n")
-			log.Printf("Generating %v utxos by creating %v tx with %v net outputs", totalUtxos, totalUtxos, multiplier)
+			log.Printf("Generating %v utxos by creating %v transactions with %v net outputs each ...", reqUtxoCount, totalUtxos, multiplier)
 			for i := 0; i < totalUtxos; i++ {
 				select {
 				case com.split <- multiplier:
@@ -477,6 +477,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 					return
 				}
 			}
+
 			wg.Wait()
 			fmt.Printf("\n")
 			// mine the above tx in the next block
