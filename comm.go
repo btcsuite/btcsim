@@ -33,11 +33,12 @@ type Block struct {
 type Communication struct {
 	wg           sync.WaitGroup
 	upstream     chan btcutil.Address
-	downstream   chan TxSplit
+	downstream   chan btcutil.Address
 	timeReceived chan time.Time
 	exit         chan struct{}
 	errChan      chan struct{}
 	height       chan int32
+	split        chan int
 	txpool       chan struct{}
 
 	enqueueBlock chan *Block
@@ -51,9 +52,10 @@ type Communication struct {
 func NewCommunication() *Communication {
 	return &Communication{
 		upstream:     make(chan btcutil.Address, 10**maxActors),
-		downstream:   make(chan TxSplit, *maxActors),
+		downstream:   make(chan btcutil.Address, *maxActors),
 		timeReceived: make(chan time.Time, *maxActors),
 		height:       make(chan int32),
+		split:        make(chan int),
 		txpool:       make(chan struct{}),
 		exit:         make(chan struct{}),
 		errChan:      make(chan struct{}, *maxActors),
@@ -373,10 +375,9 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 				utxoCount += len(a.utxos)
 			}
 
-			// txSplit maps the number of 'splits' to the number of tx in each
-			// split category
-			// a split is necessary because we need some tx to contribute the utxo
-			// count required for the next block and the rest to contribute to the tx count
+			// the required transactions are divided into two groups because we need some of them to
+			// contribute to the utxo count required for the next block and the rest to contribute to
+			// the tx count
 			//
 			// it is possible to keep dividing the same utxo until it's broken into the required
 			// number of pieces but we want to stay close to the real world scenario and maximize
@@ -390,18 +391,16 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			//
 			// at block 19999, we need to ensure that next block has 40K utxos
 			// we have 19999 - btcchain.CoinbaseMaturity = 19899 utxos
-			// we need to create 40K-19899 = 20101 utxos so in this case the split is:
-			// {1: 20101} i.e we need to create 20101 tx which give 1 net utxo output
+			// we need to create 40K-19899 = 20101 utxos so in this case, so
+			// we create 20101 tx which give 1 net utxo output
 			//
 			// at block 20000, we need to ensure that next block has 50K utxos
 			// we already have 40K by the previous iteration, so we need 50-40 = 10K utxos
-			// we also need to generate 20K tx before the next block, so the split is:
-			// {0: 10000,1: 10000} i.e. we need to create 10000 tx which generate 1 net utxo
-			// plus 10000 tx which don't generate any net utxo
+			// we also need to generate 20K tx before the next block, so
+			// create 10000 tx which generate 1 net utxo plus 10000 tx without any net utxo
 			//
 			// since we cannot generate more tx than the no of available utxos, the no of tx
 			// that can be generated at any iteration is limited by the utxos available
-			txSplit := make(map[int]int)
 
 			// in case the next row doesn't exist, we initialize the required no of utxos to zero
 			// so we keep the utxoCount same as current count
@@ -431,43 +430,51 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 				reqTxCount = utxoCount
 			}
 
+			var multiplier, totalUtxos, totalTx int
 			// skip if we already have more than the no of utxos required
 			if reqUtxoCount > 0 {
 				// e.g: if we need 18K utxos in 12K tx
 				// multiplier = [18000/12000] = [1.5] = 2
-				// txSplit[2] = 18000/2 = 9000
-				// txSplit[0] = 120000 - 9000 = 3000
-				// txSplit = {0: 3000, 2: 9000}
-				multiplier := int(math.Ceil(float64(reqUtxoCount) / float64(reqTxCount)))
-				txCount := reqUtxoCount / multiplier
-				txSplit[multiplier] = txCount
-				if reqTxCount > txCount {
-					txSplit[0] = reqTxCount - txCount
+				// totalUtxos = 18000/2 = 9000
+				// totalTx = 120000 - 9000 = 3000
+				multiplier = int(math.Ceil(float64(reqUtxoCount) / float64(reqTxCount)))
+				totalUtxos = reqUtxoCount / multiplier
+				if reqTxCount > totalUtxos {
+					totalTx = reqTxCount - totalUtxos
 				}
 			}
 
-			log.Printf("- row %v - utxos - %v - txs - %v", h, next.utxoCount, row.txCount)
-			log.Printf("Need to generate %v utxos and %v tx", reqUtxoCount, reqTxCount)
-			log.Printf("Splitting Tx: %v", txSplit)
+			log.Printf("=== row: %v === next block utxos: %v === tx: %v", h, next.utxoCount, row.txCount)
 
-			for split, txCount := range txSplit {
-				fmt.Printf("\n")
-				log.Printf("Generating %v tx with %v outputs each", txCount, split)
-				for i := 0; i < txCount; i++ {
+			log.Printf("Generating %v tx", totalTx)
+			for i := 0; i < totalTx; i++ {
+				select {
+				case addr := <-com.upstream:
 					select {
-					case addr := <-com.upstream:
-						select {
-						case com.downstream <- TxSplit{address: addr, split: split}:
-							// For every address sent downstream (one transaction about to happen),
-							// spawn a goroutine to listen for an accepted transaction in the mempool
-							wg.Add(1)
-							go com.txPoolRecv(&wg)
-						case <-com.exit:
-							return
-						}
+					case com.downstream <- addr:
+						// For every address sent downstream (one transaction about to happen),
+						// spawn a goroutine to listen for an accepted transaction in the mempool
+						wg.Add(1)
+						go com.txPoolRecv(&wg)
 					case <-com.exit:
 						return
 					}
+				case <-com.exit:
+					return
+				}
+			}
+
+			fmt.Printf("\n")
+			log.Printf("Generating %v utxos by creating %v tx with %v net outputs", totalUtxos, totalUtxos, multiplier)
+			for i := 0; i < totalUtxos; i++ {
+				select {
+				case com.split <- multiplier:
+					// For every address sent downstream (one transaction about to happen),
+					// spawn a goroutine to listen for an accepted transaction in the mempool
+					wg.Add(1)
+					go com.txPoolRecv(&wg)
+				case <-com.exit:
+					return
 				}
 			}
 			wg.Wait()

@@ -29,39 +29,31 @@ const minFee btcutil.Amount = 1e4 // 0.0001 BTC
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
 type Actor struct {
-	args         procArgs
-	cmd          *exec.Cmd
-	client       *rpc.Client
-	maxAddresses int
-	addrs        map[string]struct{}
-	downstream   chan TxSplit
-	upstream     chan btcutil.Address
-	txpool       chan struct{}
-	errChan      chan struct{}
-	quit         chan struct{}
-	coinbase     chan *btcutil.Tx
-	wg           sync.WaitGroup
-	closed       bool
-	utxos        []*TxOut
-	enqueueUtxo  chan *TxOut
-	dequeueUtxo  chan *TxOut
-	change       btcutil.Address
+	args           procArgs
+	cmd            *exec.Cmd
+	client         *rpc.Client
+	maxAddresses   int
+	addrs          map[string]struct{}
+	downstream     chan btcutil.Address
+	upstream       chan btcutil.Address
+	txpool         chan struct{}
+	errChan        chan struct{}
+	quit           chan struct{}
+	coinbase       chan *btcutil.Tx
+	wg             sync.WaitGroup
+	closed         bool
+	utxos          []*TxOut
+	enqueueUtxo    chan *TxOut
+	dequeueUtxo    chan *TxOut
+	ownedAddresses []btcutil.Address
+	change         btcutil.Address
+	split          chan int
 }
 
 // TxOut is a valid tx output that can be used to generate transactions
 type TxOut struct {
 	OutPoint *btcwire.OutPoint
 	Amount   btcutil.Amount
-}
-
-// TxSplit includes the address to which a tx should be sent
-// and the number of 'splits' to split the change and return it
-//
-// This is used to build up a large set of utxos that can be used
-// to simulate large tx/block ratios
-type TxSplit struct {
-	address btcutil.Address
-	split   int
 }
 
 // NewActor creates a new actor which runs its own wallet process connecting
@@ -85,12 +77,13 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 			port:             strconv.FormatUint(uint64(port), 10),
 			walletPassphrase: "walletpass",
 		},
-		coinbase:     make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
-		addrs:        make(map[string]struct{}),
-		maxAddresses: *maxAddresses,
-		quit:         make(chan struct{}),
-		enqueueUtxo:  make(chan *TxOut),
-		dequeueUtxo:  make(chan *TxOut),
+		coinbase:       make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
+		addrs:          make(map[string]struct{}),
+		maxAddresses:   *maxAddresses,
+		quit:           make(chan struct{}),
+		enqueueUtxo:    make(chan *TxOut),
+		dequeueUtxo:    make(chan *TxOut),
+		ownedAddresses: make([]btcutil.Address, *maxAddresses),
 	}
 	return &a, nil
 }
@@ -111,6 +104,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	a.upstream = com.upstream
 	a.errChan = com.errChan
 	a.txpool = com.txpool
+	a.split = com.split
 
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
@@ -192,15 +186,14 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Create wallet addresses and unlock wallet.
 	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
-	ownedAddresses := make([]btcutil.Address, a.maxAddresses)
-	for i := range ownedAddresses {
+	for i := range a.ownedAddresses {
 		addr, err := a.client.GetNewAddress()
 		if err != nil {
 			log.Printf("%s: Cannot create address #%d", rpcConf.Host, i+1)
 			a.errChan <- struct{}{}
 			return err
 		}
-		ownedAddresses[i] = addr
+		a.ownedAddresses[i] = addr
 		a.addrs[addr.String()] = struct{}{}
 	}
 
@@ -211,7 +204,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	}
 
 	// Send a random address upstream that will be used by the cpu miner.
-	a.upstream <- ownedAddresses[rand.Int()%a.maxAddresses]
+	a.upstream <- a.ownedAddresses[rand.Int()%a.maxAddresses]
 
 	// Start a goroutine to send addresses upstream.
 	a.wg.Add(1)
@@ -220,7 +213,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 		for {
 			select {
-			case a.upstream <- ownedAddresses[rand.Int()%a.maxAddresses]:
+			case a.upstream <- a.ownedAddresses[rand.Int()%a.maxAddresses]:
 				// Send address to upstream to request receiving a transaction.
 			case <-a.quit:
 				return
@@ -234,85 +227,134 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	a.wg.Add(1)
 	go a.queueUtxos()
 
-	// Start a goroutine to send transactions.
+	// Start a goroutine to simulate transactions.
 	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
+	go a.simulateTx()
 
-		for {
+	// Start a goroutine to generate utxos
+	a.wg.Add(1)
+	go a.generateUtxos()
+
+	return nil
+}
+
+// simulateTx runs as a goroutine and simulates transactions between actors
+//
+// It dequeues a utxo, receives a random address downstream, sends a raw
+// transaction to the address using the utxo as input
+func (a *Actor) simulateTx() {
+	defer a.wg.Done()
+
+	for {
+		select {
+		case utxo := <-a.dequeueUtxo:
 			select {
-			case utxo := <-a.dequeueUtxo:
-				select {
-				case txsplit := <-a.downstream:
-					// Create a raw transaction
-					txid := utxo.OutPoint.Hash.String()
-					inputs := []btcjson.TransactionInput{{txid, utxo.OutPoint.Index}}
+			case addr := <-a.downstream:
+				// Create a raw transaction
+				inputs := []btcjson.TransactionInput{{utxo.OutPoint.Hash.String(), utxo.OutPoint.Index}}
 
-					// Provide a fees of minFee to ensure the tx gets mined
-					amt := utxo.Amount - minFee
-					amounts := map[btcutil.Address]btcutil.Amount{}
+				// Provide a fees of minFee to ensure the tx gets mined
+				amt := utxo.Amount - minFee
+				amounts := map[btcutil.Address]btcutil.Amount{}
 
-					// For each 'split', create a output of random amount and sent it
-					// to a random address from the address space
-					for i := 0; i < txsplit.split; i++ {
-						// skip if this amt can't be split any further
-						if amt > minFee {
-							// pick a random address
-							to := ownedAddresses[rand.Int()%a.maxAddresses]
-							// pick a random change amount which is less than amt
-							// but have a lower bound at minFee
-							change := btcutil.Amount(rand.Int63n(int64(amt) / 2))
-							if change < minFee {
-								change = minFee
-							}
-							amounts[to] = change
-							amt -= change
-						}
-					}
-					// Send the remaining amount to the address received downstream
-					amounts[txsplit.address] = amt
+				// Send the remaining amount to the address received downstream
+				amounts[addr] = amt
 
-					msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
-					if err != nil {
-						log.Printf("%s: Cannot create raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
+				err := a.sendRawTransaction(inputs, amounts)
+				if err != nil {
+					log.Printf("error sending raw transaction: %v", err)
+					if a.txpool != nil {
+						a.txpool <- struct{}{}
 					}
-					// sign it
-					msgTx, ok, err := a.client.SignRawTransaction(msgTx)
-					if err != nil {
-						log.Printf("%s: Cannot sign raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
-					}
-					if !ok {
-						log.Printf("%s: Not all inputs have been signed", rpcConf.Host)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
-					}
-					// and finally send it.
-					if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
-						log.Printf("%s: Cannot send raw transaction: %v", rpcConf.Host, err)
-						if a.txpool != nil {
-							a.txpool <- struct{}{}
-						}
-						continue
-					}
-				case <-a.quit:
-					return
+					continue
 				}
+
 			case <-a.quit:
 				return
 			}
+		case <-a.quit:
+			return
 		}
-	}()
+	}
+}
 
+// generateUtxos runs as a goroutine and builds up a large set of utxos that
+// can be used to simulate large tx/block ratios
+//
+// It receives a 'split' which is int that indicates the number of resultant utxos
+// the tx is sent to addresses from the same actor since we're only interested in
+// building up the utxo set
+func (a *Actor) generateUtxos() {
+	defer a.wg.Done()
+
+	for {
+		select {
+		case utxo := <-a.dequeueUtxo:
+			select {
+			case split := <-a.split:
+				// Create a raw transaction
+				inputs := []btcjson.TransactionInput{{utxo.OutPoint.Hash.String(), utxo.OutPoint.Index}}
+
+				// Provide a fees of minFee to ensure the tx gets mined
+				amt := utxo.Amount - minFee
+				amounts := map[btcutil.Address]btcutil.Amount{}
+
+				// Create a output of random amount and sent it
+				// to a random address from the address space
+				// Iteration is split+1 times taking into account this utxo
+				// which is consumed in the process
+				for i := 0; i < split+1; i++ {
+					// skip if this amt can't be split any further
+					if amt > minFee {
+						// pick a random address
+						to := a.ownedAddresses[rand.Int()%a.maxAddresses]
+						// pick a random change amount which is less than amt
+						// but have a lower bound at minFee
+						change := btcutil.Amount(rand.Int63n(int64(amt) / 2))
+						if change < minFee {
+							change = minFee
+						}
+						amounts[to] = change
+						amt -= change
+					}
+				}
+
+				err := a.sendRawTransaction(inputs, amounts)
+				if err != nil {
+					log.Printf("error sending raw transaction: %v", err)
+					if a.txpool != nil {
+						a.txpool <- struct{}{}
+					}
+					continue
+				}
+
+			case <-a.quit:
+				return
+			}
+		case <-a.quit:
+			return
+		}
+	}
+}
+
+// sendRawTransaction creates a raw transaction, signs it and sends it
+func (a *Actor) sendRawTransaction(inputs []btcjson.TransactionInput, amounts map[btcutil.Address]btcutil.Amount) error {
+	msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
+	if err != nil {
+		return err
+	}
+	// sign it
+	msgTx, ok, err := a.client.SignRawTransaction(msgTx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return err
+	}
+	// and finally send it.
+	if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
+		return err
+	}
 	return nil
 }
 
