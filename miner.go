@@ -57,6 +57,7 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		"--listen=:18550",
 		"--rpclisten=:18551",
 		"--generate",
+		"-dMINR=trace",
 		fmt.Sprintf("--blockmaxsize=%d", *maxBlockSize),
 	}
 
@@ -65,6 +66,13 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 	}
 
 	miner.cmd = exec.Command("btcd", minerArgs...)
+	debugLog, err := os.Create("miner.log")
+	if err != nil {
+		log.Printf("Warning: error creating log file; logging disabled: %v", err)
+	} else {
+		miner.cmd.Stdout = debugLog
+		miner.cmd.Stderr = debugLog
+	}
 	if err := miner.cmd.Start(); err != nil {
 		log.Printf("%s: Cannot start cpu miner: %v", defaultChainServer.connect, err)
 		return nil, err
