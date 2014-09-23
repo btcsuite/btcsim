@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -216,7 +217,7 @@ func main() {
 	com.WaitForShutdown()
 
 	tps, ok := <-tpsChan
-	if ok {
+	if ok && !math.IsNaN(tps) {
 		log.Printf("Average transactions per sec: %.2f", tps)
 	}
 }
