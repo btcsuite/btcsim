@@ -55,7 +55,7 @@ var (
 
 	// matureBlock defines after which block the blockchain is mature enough to start
 	// controlled mining as per the tx curve
-	matureBlock = flag.Int("matureblock", 16200, "Block number at blockchain maturity")
+	matureBlock = flag.Int("matureblock", 20000, "Block number at blockchain maturity")
 
 	// maxAddresses defines the number of addresses to generate per actor
 	maxAddresses = flag.Int("maxaddresses", 100, "Maximum addresses per actor")
@@ -96,6 +96,13 @@ func main() {
 		if err != nil {
 			log.Fatalf("Error reading tx curve CSV: %v", err)
 			return
+		}
+	}
+	// set min block number from the curve as matureBlock
+	for k, _ := range txCurve {
+		block := int(k)
+		if block < *matureBlock {
+			*matureBlock = block
 		}
 	}
 
