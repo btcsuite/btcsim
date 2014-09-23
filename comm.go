@@ -35,6 +35,7 @@ type Communication struct {
 	upstream     chan btcutil.Address
 	downstream   chan btcutil.Address
 	timeReceived chan time.Time
+	blockTxCount chan int
 	exit         chan struct{}
 	errChan      chan struct{}
 	height       chan int32
@@ -54,6 +55,7 @@ func NewCommunication() *Communication {
 		upstream:     make(chan btcutil.Address, 10**maxActors),
 		downstream:   make(chan btcutil.Address, *maxActors),
 		timeReceived: make(chan time.Time, *maxActors),
+		blockTxCount: make(chan int, *maxActors),
 		height:       make(chan int32),
 		split:        make(chan int),
 		txpool:       make(chan struct{}),
@@ -67,8 +69,10 @@ func NewCommunication() *Communication {
 
 // Start handles the main part of a simulation by starting
 // all the necessary goroutines.
-func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.Cmd, txCurve map[int32]*Row) (tpsChan chan float64) {
+func (com *Communication) Start(actors []*Actor, client *rpc.Client,
+	btcd *exec.Cmd, txCurve map[int32]*Row) (tpsChan chan float64, tpbChan chan int) {
 	tpsChan = make(chan float64, 1)
+	tpbChan = make(chan int, 1)
 
 	// Start actors
 	for _, a := range actors {
@@ -95,6 +99,7 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 			select {
 			case <-com.exit:
 				close(tpsChan)
+				close(tpbChan)
 				return
 			default:
 			}
@@ -106,6 +111,7 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 	if err != nil {
 		safeClose(com.exit) // make failedActors goroutine exit
 		close(tpsChan)
+		close(tpbChan)
 		com.wg.Add(1)
 		go com.Shutdown(miner, actors, btcd)
 		return
@@ -117,6 +123,10 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client, btcd *exec.
 	// Start a goroutine to estimate tps
 	com.wg.Add(1)
 	go com.estimateTps(tpsChan, txCurve)
+
+	// Start a goroutine to find max tpb
+	com.wg.Add(1)
+	go com.estimateTpb(tpbChan)
 
 	// Start a goroutine to coordinate transactions
 	com.wg.Add(1)
@@ -234,14 +244,20 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 			}
 			// allow Communicate to sync with the processed block
 			if b.height >= int32(*matureBlock)-1 {
-				var utxoCount int
+				var txCount, utxoCount int
 				for _, a := range actors {
 					utxoCount += len(a.utxos)
 				}
+				txCount = len(block.Transactions())
 				log.Printf("%v: block# %v: no of tx: %v, no of utxos: %v", b.height,
-					b.hash, len(block.Transactions()), utxoCount)
+					b.hash, txCount, utxoCount)
 				select {
 				case com.processed <- b:
+				case <-com.exit:
+					return
+				}
+				select {
+				case com.blockTxCount <- txCount:
 				case <-com.exit:
 					return
 				}
@@ -341,6 +357,25 @@ func (com *Communication) estimateTps(tpsChan chan<- float64, txCurve map[int32]
 			}
 		case <-com.exit:
 			tpsChan <- float64(txnCount) / diff.Seconds()
+			return
+		}
+	}
+}
+
+// estimateTpb sends the maximum transactions over the returned chan
+func (com *Communication) estimateTpb(tpbChan chan<- int) {
+	defer com.wg.Done()
+
+	var maxTpb int
+
+	for {
+		select {
+		case last := <-com.blockTxCount:
+			if last > maxTpb {
+				maxTpb = last
+			}
+		case <-com.exit:
+			tpbChan <- maxTpb
 			return
 		}
 	}

@@ -213,12 +213,17 @@ func main() {
 	})
 
 	// Start simulation.
-	tpsChan := com.Start(actors, client, btcd, txCurve)
+	tpsChan, tpbChan := com.Start(actors, client, btcd, txCurve)
 	com.WaitForShutdown()
 
 	tps, ok := <-tpsChan
 	if ok && !math.IsNaN(tps) {
 		log.Printf("Average transactions per sec: %.2f", tps)
+	}
+
+	tpb, ok := <-tpbChan
+	if ok && tpb > 0 {
+		log.Printf("Maximum transactions per block: %v", tpb)
 	}
 }
 
