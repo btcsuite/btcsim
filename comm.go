@@ -469,6 +469,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			}
 
 			var multiplier, totalUtxos, totalTx int
+			totalTx = reqTxCount
 			// skip if we already have more than the no of utxos required
 			if reqUtxoCount > 0 {
 				// e.g: if we need 18K utxos in 12K tx
