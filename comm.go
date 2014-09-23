@@ -469,7 +469,6 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			}
 
 			var multiplier, totalUtxos, totalTx int
-			totalTx = reqTxCount
 			// skip if we already have more than the no of utxos required
 			if reqUtxoCount > 0 {
 				// e.g: if we need 18K utxos in 12K tx
@@ -478,9 +477,11 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 				// totalTx = 120000 - 9000 = 3000
 				multiplier = int(math.Ceil(float64(reqUtxoCount) / float64(reqTxCount)))
 				totalUtxos = reqUtxoCount / multiplier
-				if reqTxCount > totalUtxos {
-					totalTx = reqTxCount - totalUtxos
-				}
+			}
+
+			// if we're not already covered by the utxo transactions, generate additional tx
+			if reqTxCount > totalUtxos {
+				totalTx = reqTxCount - totalUtxos
 			}
 
 			log.Printf("=== row: %v === next block utxos: %v === transactions: %v", h, next.utxoCount, row.txCount)
