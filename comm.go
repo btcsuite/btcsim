@@ -249,8 +249,8 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 					utxoCount += len(a.utxos)
 				}
 				txCount = len(block.Transactions())
-				log.Printf("%v: block# %v: no of tx: %v, no of utxos: %v", b.height,
-					b.hash, txCount, utxoCount)
+				log.Printf("%v: block# %v: no of utxos: %v, no of transactions: %v", b.height,
+					b.hash, utxoCount, txCount)
 				select {
 				case com.processed <- b:
 				case <-com.exit:
