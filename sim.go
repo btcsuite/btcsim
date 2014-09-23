@@ -99,7 +99,7 @@ func main() {
 		}
 	}
 	// set min block number from the curve as matureBlock
-	for k, _ := range txCurve {
+	for k := range txCurve {
 		block := int(k)
 		if block < *matureBlock {
 			*matureBlock = block

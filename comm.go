@@ -446,7 +446,10 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			}
 
 			// reqUtxoCount is the number of utxos required
-			reqUtxoCount := next.utxoCount - utxoCount
+			reqUtxoCount := 0
+			if next.utxoCount > utxoCount {
+				reqUtxoCount = next.utxoCount - utxoCount
+			}
 
 			// in case this row doesn't exist, we initialize the required no of tx to reqUtxoCount
 			// i.e one tx per utxo required
@@ -481,12 +484,32 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 
 			log.Printf("=== row: %v === next block utxos: %v === transactions: %v", h, next.utxoCount, row.txCount)
 
-			log.Printf("Generating %v transactions ...", totalTx)
-			for i := 0; i < totalTx; i++ {
-				select {
-				case addr := <-com.upstream:
+			if totalTx > 0 {
+				log.Printf("Generating %v transactions ...", totalTx)
+				for i := 0; i < totalTx; i++ {
 					select {
-					case com.downstream <- addr:
+					case addr := <-com.upstream:
+						select {
+						case com.downstream <- addr:
+							// For every address sent downstream (one transaction about to happen),
+							// spawn a goroutine to listen for an accepted transaction in the mempool
+							wg.Add(1)
+							go com.txPoolRecv(&wg)
+						case <-com.exit:
+							return
+						}
+					case <-com.exit:
+						return
+					}
+				}
+			}
+
+			if totalUtxos > 0 {
+				fmt.Printf("\n")
+				log.Printf("Generating %v utxos by creating %v transactions with %v net outputs each ...", reqUtxoCount, totalUtxos, multiplier)
+				for i := 0; i < totalUtxos; i++ {
+					select {
+					case com.split <- multiplier:
 						// For every address sent downstream (one transaction about to happen),
 						// spawn a goroutine to listen for an accepted transaction in the mempool
 						wg.Add(1)
@@ -494,22 +517,6 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 					case <-com.exit:
 						return
 					}
-				case <-com.exit:
-					return
-				}
-			}
-
-			fmt.Printf("\n")
-			log.Printf("Generating %v utxos by creating %v transactions with %v net outputs each ...", reqUtxoCount, totalUtxos, multiplier)
-			for i := 0; i < totalUtxos; i++ {
-				select {
-				case com.split <- multiplier:
-					// For every address sent downstream (one transaction about to happen),
-					// spawn a goroutine to listen for an accepted transaction in the mempool
-					wg.Add(1)
-					go com.txPoolRecv(&wg)
-				case <-com.exit:
-					return
 				}
 			}
 
