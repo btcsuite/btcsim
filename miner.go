@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	rpc "github.com/conformal/btcrpcclient"
@@ -66,7 +67,17 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 	}
 
 	miner.cmd = exec.Command("btcd", minerArgs...)
-	debugLog, err := os.Create("miner.log")
+	btcsimHomeDir := btcutil.AppDataDir("btcsim", false)
+	if _, err := os.Stat(btcsimHomeDir); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(btcsimHomeDir, 0700); err != nil {
+				log.Printf("Warning: error creating home dir; logging disabled: %v", err)
+			}
+		} else {
+			log.Printf("Warning: error finding home dir; logging disabled: %v", err)
+		}
+	}
+	debugLog, err := os.Create(filepath.Join(btcsimHomeDir, "miner.log"))
 	if err != nil {
 		log.Printf("Warning: error creating log file; logging disabled: %v", err)
 	} else {
