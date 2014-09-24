@@ -81,7 +81,7 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client,
 			defer com.wg.Done()
 			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
 				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
-				a.ForceShutdown()
+				a.Shutdown()
 			}
 		}(a, com)
 	}

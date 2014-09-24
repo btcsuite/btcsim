@@ -412,7 +412,10 @@ func (a *Actor) Shutdown() {
 	default:
 		close(a.quit)
 		go a.drainChans()
-		a.client.Shutdown()
+		a.WaitForShutdown()
+		if a.client != nil {
+			a.client.Shutdown()
+		}
 		if err := Exit(a.cmd); err != nil {
 			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
 		}
@@ -444,12 +447,6 @@ func (a *Actor) drainChans() {
 // Cleanup removes the directory an Actor's wallet process was previously using.
 func (a *Actor) Cleanup() error {
 	return os.RemoveAll(a.args.dir)
-}
-
-// ForceShutdown shutdowns an actor that unexpectedly exited a.Start
-func (a *Actor) ForceShutdown() {
-	a.WaitForShutdown()
-	a.Shutdown()
 }
 
 type procArgs struct {
