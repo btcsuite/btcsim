@@ -256,14 +256,6 @@ func Exit(cmd *exec.Cmd) (err error) {
 	return
 }
 
-// Close sends close signal to actors, waits for actor goroutines
-// to exit and then shuts down all actors.
-func Close(actors []*Actor) {
-	for _, a := range actors {
-		a.Shutdown()
-	}
-}
-
 // safeClose safely closes the exit channel.
 func safeClose(exit chan struct{}) {
 	select {

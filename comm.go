@@ -546,7 +546,9 @@ func (com *Communication) Shutdown(miner *Miner, actors []*Actor, btcd *exec.Cmd
 	if miner != nil {
 		miner.Shutdown()
 	}
-	Close(actors)
+	for _, a := range actors {
+		a.Shutdown()
+	}
 	if err := Exit(btcd); err != nil {
 		log.Printf("Cannot kill initial btcd process: %v", err)
 	}
