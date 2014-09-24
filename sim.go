@@ -6,7 +6,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"math"
@@ -66,10 +65,15 @@ var (
 	// txCurvePath is the path to a CSV file containing the block, utxo count, tx count
 	txCurvePath = flag.String("txcurve", "",
 		"Path to the CSV File containing block, utxo count, tx count fields")
+)
 
-	// tpb is transactions per block that will be used to generate a csv file
-	// containing <block #>, <txCount> fields
-	tpb = flag.Int("tpb", 100, "Transactions per block")
+const (
+	// SimRows is the number of rows in the default curve
+	SimRows = 10
+	// SimUtxoCount is the starting number of utxos in the default curve
+	SimUtxoCount = 2000
+	// SimTxCount is the starting number of tx in the default curve
+	SimTxCount = 1000
 )
 
 func init() {
@@ -80,17 +84,21 @@ func init() {
 }
 
 func main() {
-	if *txCurvePath == "" {
-		fmt.Println("Usage: btcsim -txcurve {.csv} [{other flags}]")
-		flag.PrintDefaults()
-		os.Exit(0)
-	}
+	var txCurve map[int32]*Row
 	// txCurve is a slice of Rows, each corresponding
 	// to a row in the input CSV file
 	// if txCurve is not nil, we control mining so as to
 	// get the same block vs tx count as the input curve
-	var txCurve map[int32]*Row
-	if *txCurvePath != "" {
+	if *txCurvePath == "" {
+		txCurve = make(map[int32]*Row, SimRows)
+		for i := 1; i < *matureBlock+SimRows; i++ {
+			block := int32(*matureBlock + i)
+			txCurve[block] = &Row{
+				utxoCount: i * SimUtxoCount,
+				txCount:   i * SimTxCount,
+			}
+		}
+	} else {
 		var err error
 		txCurve, err = readCSV(*txCurvePath)
 		if err != nil {
