@@ -239,14 +239,14 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 					}
 					txout := com.getUtxo(tx, vout, uint32(n))
 					// add utxo to actor's pool
-					actor.enqueueUtxo <- txout
+					actor.utxoQueue.enqueueUtxo <- txout
 				}
 			}
 			// allow Communicate to sync with the processed block
 			if b.height >= int32(*matureBlock)-1 {
 				var txCount, utxoCount int
 				for _, a := range actors {
-					utxoCount += len(a.utxos)
+					utxoCount += len(a.utxoQueue.utxos)
 				}
 				txCount = len(block.Transactions())
 				log.Printf("%v: block# %v: no of utxos: %v, no of transactions: %v", b.height,
@@ -409,7 +409,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			// count the number of utxos available in total
 			var utxoCount int
 			for _, a := range actors {
-				utxoCount += len(a.utxos)
+				utxoCount += len(a.utxoQueue.utxos)
 			}
 
 			// the required transactions are divided into two groups because we need some of them to

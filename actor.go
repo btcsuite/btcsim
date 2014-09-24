@@ -26,6 +26,12 @@ import (
 // minFee is the minimum tx fee that can be paid
 const minFee btcutil.Amount = 1e4 // 0.0001 BTC
 
+type UtxoQueue struct {
+	utxos       []*TxOut
+	enqueueUtxo chan *TxOut
+	dequeueUtxo chan *TxOut
+}
+
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
 type Actor struct {
@@ -39,10 +45,8 @@ type Actor struct {
 	quit           chan struct{}
 	coinbase       chan *btcutil.Tx
 	wg             sync.WaitGroup
-	utxos          []*TxOut
-	enqueueUtxo    chan *TxOut
-	dequeueUtxo    chan *TxOut
 	ownedAddresses []btcutil.Address
+	utxoQueue      UtxoQueue
 }
 
 // TxOut is a valid tx output that can be used to generate transactions
@@ -74,9 +78,11 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 		},
 		coinbase:       make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
 		quit:           make(chan struct{}),
-		enqueueUtxo:    make(chan *TxOut),
-		dequeueUtxo:    make(chan *TxOut),
 		ownedAddresses: make([]btcutil.Address, *maxAddresses),
+		utxoQueue: UtxoQueue{
+			enqueueUtxo: make(chan *TxOut),
+			dequeueUtxo: make(chan *TxOut),
+		},
 	}
 	return &a, nil
 }
@@ -238,7 +244,7 @@ func (a *Actor) simulateTx() {
 
 	for {
 		select {
-		case utxo := <-a.dequeueUtxo:
+		case utxo := <-a.utxoQueue.dequeueUtxo:
 			select {
 			case addr := <-a.downstream:
 				// Create a raw transaction
@@ -280,7 +286,7 @@ func (a *Actor) generateUtxos(split <-chan int) {
 
 	for {
 		select {
-		case utxo := <-a.dequeueUtxo:
+		case utxo := <-a.utxoQueue.dequeueUtxo:
 			select {
 			case split := <-split:
 				// Create a raw transaction
@@ -353,7 +359,7 @@ func (a *Actor) sendRawTransaction(inputs []btcjson.TransactionInput, amounts ma
 func (a *Actor) queueUtxos() {
 	defer a.wg.Done()
 
-	enqueue := a.enqueueUtxo
+	enqueue := a.utxoQueue.enqueueUtxo
 	var dequeue chan *TxOut
 	var next *TxOut
 out:
@@ -363,23 +369,23 @@ out:
 			if !ok {
 				// If no a.utxos are queued for handling,
 				// the queue is finished.
-				if len(a.utxos) == 0 {
+				if len(a.utxoQueue.utxos) == 0 {
 					break out
 				}
 				// nil channel so no more reads can occur.
 				enqueue = nil
 				continue
 			}
-			if len(a.utxos) == 0 {
+			if len(a.utxoQueue.utxos) == 0 {
 				next = n
-				dequeue = a.dequeueUtxo
+				dequeue = a.utxoQueue.dequeueUtxo
 			}
-			a.utxos = append(a.utxos, n)
+			a.utxoQueue.utxos = append(a.utxoQueue.utxos, n)
 		case dequeue <- next:
-			a.utxos[0] = nil
-			a.utxos = a.utxos[1:]
-			if len(a.utxos) != 0 {
-				next = a.utxos[0]
+			a.utxoQueue.utxos[0] = nil
+			a.utxoQueue.utxos = a.utxoQueue.utxos[1:]
+			if len(a.utxoQueue.utxos) != 0 {
+				next = a.utxoQueue.utxos[0]
 			} else {
 				// If no more a.utxos can be enqueued, the
 				// queue is finished.
@@ -392,7 +398,7 @@ out:
 			break out
 		}
 	}
-	close(a.dequeueUtxo)
+	close(a.utxoQueue.dequeueUtxo)
 }
 
 // Stop closes the client and quit channel so every running goroutine
@@ -426,7 +432,7 @@ func (a *Actor) drainChans() {
 		case <-a.downstream:
 		case <-a.upstream:
 		case <-a.txpool:
-		case <-a.dequeueUtxo:
+		case <-a.utxoQueue.dequeueUtxo:
 		case <-a.errChan:
 		}
 	}
