@@ -223,13 +223,13 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 						// if the chan is full, the first tx would be mature
 						// so add it to the pool
 						select {
-						case actor.coinbase <- tx:
+						case actor.utxoQueue.coinbaseQueue <- tx:
 							break next
 						default:
 							// dequeue the first mature tx
-							mTx := <-actor.coinbase
+							mTx := <-actor.utxoQueue.coinbaseQueue
 							// enqueue the latest tx
-							actor.coinbase <- tx
+							actor.utxoQueue.coinbaseQueue <- tx
 							// we'll process the mature tx next
 							// so point tx to mTx
 							tx = mTx

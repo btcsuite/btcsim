@@ -26,10 +26,14 @@ import (
 // minFee is the minimum tx fee that can be paid
 const minFee btcutil.Amount = 1e4 // 0.0001 BTC
 
+// UtxoQueue is the queue of utxos belonging to a actor
+// coinbaseQueue is the queue of coinbases waiting for
+// maturity
 type UtxoQueue struct {
-	utxos       []*TxOut
-	enqueueUtxo chan *TxOut
-	dequeueUtxo chan *TxOut
+	utxos         []*TxOut
+	coinbaseQueue chan *btcutil.Tx
+	enqueueUtxo   chan *TxOut
+	dequeueUtxo   chan *TxOut
 }
 
 // Actor describes an actor on the simulation network.  Each actor runs
@@ -43,7 +47,6 @@ type Actor struct {
 	txpool         chan struct{}
 	errChan        chan struct{}
 	quit           chan struct{}
-	coinbase       chan *btcutil.Tx
 	wg             sync.WaitGroup
 	ownedAddresses []btcutil.Address
 	utxoQueue      UtxoQueue
@@ -76,12 +79,12 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 			port:             strconv.FormatUint(uint64(port), 10),
 			walletPassphrase: "walletpass",
 		},
-		coinbase:       make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
 		quit:           make(chan struct{}),
 		ownedAddresses: make([]btcutil.Address, *maxAddresses),
 		utxoQueue: UtxoQueue{
-			enqueueUtxo: make(chan *TxOut),
-			dequeueUtxo: make(chan *TxOut),
+			coinbaseQueue: make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
+			enqueueUtxo:   make(chan *TxOut),
+			dequeueUtxo:   make(chan *TxOut),
 		},
 	}
 	return &a, nil
