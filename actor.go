@@ -286,9 +286,9 @@ func (a *Actor) generateUtxos(split <-chan int) {
 
 	for {
 		select {
-		case utxo := <-a.utxoQueue.dequeueUtxo:
+		case split := <-split:
 			select {
-			case split := <-split:
+			case utxo := <-a.utxoQueue.dequeueUtxo:
 				// Create a raw transaction
 				inputs := []btcjson.TransactionInput{{utxo.OutPoint.Hash.String(), utxo.OutPoint.Index}}
 
