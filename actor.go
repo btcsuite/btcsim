@@ -251,7 +251,10 @@ func (a *Actor) simulateTx() {
 			select {
 			case utxo := <-a.utxoQueue.dequeueUtxo:
 				// Create a raw transaction
-				inputs := []btcjson.TransactionInput{{utxo.OutPoint.Hash.String(), utxo.OutPoint.Index}}
+				inputs := []btcjson.TransactionInput{{
+					Txid: utxo.OutPoint.Hash.String(),
+					Vout: utxo.OutPoint.Index,
+				}}
 
 				// Provide a fees of minFee to ensure the tx gets mined
 				amt := utxo.Amount - minFee
@@ -293,7 +296,10 @@ func (a *Actor) splitUtxos(split <-chan int) {
 			select {
 			case utxo := <-a.utxoQueue.dequeueUtxo:
 				// Create a raw transaction
-				inputs := []btcjson.TransactionInput{{utxo.OutPoint.Hash.String(), utxo.OutPoint.Index}}
+				inputs := []btcjson.TransactionInput{{
+					Txid: utxo.OutPoint.Hash.String(),
+					Vout: utxo.OutPoint.Index,
+				}}
 
 				// Provide a fees of minFee to ensure the tx gets mined
 				amt := utxo.Amount - minFee
