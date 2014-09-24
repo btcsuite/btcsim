@@ -237,16 +237,16 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 // simulateTx runs as a goroutine and simulates transactions between actors
 //
-// It dequeues a utxo, receives a random address downstream, sends a raw
+// It receives a random address downstream, dequeues a utxo, sends a raw
 // transaction to the address using the utxo as input
 func (a *Actor) simulateTx() {
 	defer a.wg.Done()
 
 	for {
 		select {
-		case utxo := <-a.utxoQueue.dequeueUtxo:
+		case addr := <-a.downstream:
 			select {
-			case addr := <-a.downstream:
+			case utxo := <-a.utxoQueue.dequeueUtxo:
 				// Create a raw transaction
 				inputs := []btcjson.TransactionInput{{utxo.OutPoint.Hash.String(), utxo.OutPoint.Index}}
 
