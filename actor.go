@@ -233,7 +233,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Start a goroutine to generate utxos
 	a.wg.Add(1)
-	go a.generateUtxos(com.split)
+	go a.splitUtxos(com.split)
 
 	return nil
 }
@@ -278,13 +278,13 @@ func (a *Actor) simulateTx() {
 	}
 }
 
-// generateUtxos runs as a goroutine and builds up a large set of utxos that
+// splitUtxos runs as a goroutine and builds up a large set of utxos that
 // can be used to simulate large tx/block ratios
 //
 // It receives a 'split' which is int that indicates the number of resultant utxos
 // the tx is sent to addresses from the same actor since we're only interested in
 // building up the utxo set
-func (a *Actor) generateUtxos(split <-chan int) {
+func (a *Actor) splitUtxos(split <-chan int) {
 	defer a.wg.Done()
 
 	for {
