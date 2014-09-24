@@ -32,8 +32,6 @@ type Actor struct {
 	args           procArgs
 	cmd            *exec.Cmd
 	client         *rpc.Client
-	maxAddresses   int
-	addrs          map[string]struct{}
 	downstream     chan btcutil.Address
 	upstream       chan btcutil.Address
 	txpool         chan struct{}
@@ -46,8 +44,6 @@ type Actor struct {
 	enqueueUtxo    chan *TxOut
 	dequeueUtxo    chan *TxOut
 	ownedAddresses []btcutil.Address
-	change         btcutil.Address
-	split          chan int
 }
 
 // TxOut is a valid tx output that can be used to generate transactions
@@ -78,8 +74,6 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 			walletPassphrase: "walletpass",
 		},
 		coinbase:       make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
-		addrs:          make(map[string]struct{}),
-		maxAddresses:   *maxAddresses,
 		quit:           make(chan struct{}),
 		enqueueUtxo:    make(chan *TxOut),
 		dequeueUtxo:    make(chan *TxOut),
@@ -104,7 +98,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	a.upstream = com.upstream
 	a.errChan = com.errChan
 	a.txpool = com.txpool
-	a.split = com.split
 
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
@@ -194,7 +187,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 			return err
 		}
 		a.ownedAddresses[i] = addr
-		a.addrs[addr.String()] = struct{}{}
 	}
 
 	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
@@ -204,7 +196,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	}
 
 	// Send a random address upstream that will be used by the cpu miner.
-	a.upstream <- a.ownedAddresses[rand.Int()%a.maxAddresses]
+	a.upstream <- a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
 
 	// Start a goroutine to send addresses upstream.
 	a.wg.Add(1)
@@ -213,7 +205,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 		for {
 			select {
-			case a.upstream <- a.ownedAddresses[rand.Int()%a.maxAddresses]:
+			case a.upstream <- a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]:
 				// Send address to upstream to request receiving a transaction.
 			case <-a.quit:
 				return
@@ -233,7 +225,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Start a goroutine to generate utxos
 	a.wg.Add(1)
-	go a.generateUtxos()
+	go a.generateUtxos(com.split)
 
 	return nil
 }
@@ -284,14 +276,14 @@ func (a *Actor) simulateTx() {
 // It receives a 'split' which is int that indicates the number of resultant utxos
 // the tx is sent to addresses from the same actor since we're only interested in
 // building up the utxo set
-func (a *Actor) generateUtxos() {
+func (a *Actor) generateUtxos(split <-chan int) {
 	defer a.wg.Done()
 
 	for {
 		select {
 		case utxo := <-a.dequeueUtxo:
 			select {
-			case split := <-a.split:
+			case split := <-split:
 				// Create a raw transaction
 				inputs := []btcjson.TransactionInput{{utxo.OutPoint.Hash.String(), utxo.OutPoint.Index}}
 
@@ -307,7 +299,7 @@ func (a *Actor) generateUtxos() {
 					// skip if this amt can't be split any further
 					if amt > minFee {
 						// pick a random address
-						to := a.ownedAddresses[rand.Int()%a.maxAddresses]
+						to := a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
 						// pick a random change amount which is less than amt
 						// but have a lower bound at minFee
 						change := btcutil.Amount(rand.Int63n(int64(amt) / 2))

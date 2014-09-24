@@ -284,8 +284,10 @@ func (com *Communication) getActor(actors []*Actor,
 	// a global addr -> actor index rather than looking
 	// up each actor addrs
 	for _, actor := range actors {
-		if _, ok := actor.addrs[addr]; ok {
-			return actor, nil
+		for _, actorAddr := range actor.ownedAddresses {
+			if addr == actorAddr.String() {
+				return actor, nil
+			}
 		}
 	}
 	err = errors.New("Cannot find any actor who owns this tx output")
