@@ -259,12 +259,6 @@ func Exit(cmd *exec.Cmd) (err error) {
 // Close sends close signal to actors, waits for actor goroutines
 // to exit and then shuts down all actors.
 func Close(actors []*Actor) {
-	// Stop actors by shuting down their rpc client and closing quit channel.
-	for _, a := range actors {
-		a.WaitForShutdown()
-	}
-
-	// shutdown only after all actors have stopped
 	for _, a := range actors {
 		a.Shutdown()
 	}
