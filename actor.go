@@ -39,7 +39,6 @@ type Actor struct {
 	quit           chan struct{}
 	coinbase       chan *btcutil.Tx
 	wg             sync.WaitGroup
-	closed         bool
 	utxos          []*TxOut
 	enqueueUtxo    chan *TxOut
 	dequeueUtxo    chan *TxOut
@@ -398,24 +397,12 @@ out:
 
 // Stop closes the client and quit channel so every running goroutine
 // can return or just exits if quit has already been closed.
-func (a *Actor) Stop() {
+func (a *Actor) Shutdown() {
 	select {
 	case <-a.quit:
 	default:
-		go a.drainChans()
-		a.client.Shutdown()
 		close(a.quit)
-	}
-}
-
-// WaitForShutdown waits until every actor goroutine has returned
-func (a *Actor) WaitForShutdown() {
-	a.wg.Wait()
-}
-
-// Shutdown kills the actor btcwallet process and removes its data directories.
-func (a *Actor) Shutdown() {
-	if !a.closed {
+		go a.drainChans()
 		a.client.Shutdown()
 		if err := Exit(a.cmd); err != nil {
 			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
@@ -423,11 +410,13 @@ func (a *Actor) Shutdown() {
 		if err := a.Cleanup(); err != nil {
 			log.Printf("Cannot cleanup actor directory on %s: %v", "localhost:"+a.args.port, err)
 		}
-		a.closed = true
 		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
-	} else {
-		log.Printf("Actor on %s already shutdown", "localhost:"+a.args.port)
 	}
+}
+
+// WaitForShutdown waits until every actor goroutine has returned
+func (a *Actor) WaitForShutdown() {
+	a.wg.Wait()
 }
 
 // drainChans drains all chans that might block an actor from shutting down
@@ -450,7 +439,6 @@ func (a *Actor) Cleanup() error {
 
 // ForceShutdown shutdowns an actor that unexpectedly exited a.Start
 func (a *Actor) ForceShutdown() {
-	a.Stop()
 	a.WaitForShutdown()
 	a.Shutdown()
 }

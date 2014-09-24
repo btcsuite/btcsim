@@ -253,7 +253,6 @@ func Exit(cmd *exec.Cmd) (err error) {
 func Close(actors []*Actor) {
 	// Stop actors by shuting down their rpc client and closing quit channel.
 	for _, a := range actors {
-		a.Stop()
 		a.WaitForShutdown()
 	}
 
