@@ -64,7 +64,7 @@ var (
 	maxBlockSize = flag.Int("maxblocksize", 999000, "Maximum block size used by the miner")
 
 	// txCurvePath is the path to a CSV file containing the block, utxo count, tx count
-	txCurvePath = flag.String("txcurve", "tx-curve-linear.csv",
+	txCurvePath = flag.String("txcurve", "",
 		"Path to the CSV File containing block, utxo count, tx count fields")
 
 	// tpb is transactions per block that will be used to generate a csv file
