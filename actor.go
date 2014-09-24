@@ -231,7 +231,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	a.wg.Add(1)
 	go a.simulateTx()
 
-	// Start a goroutine to generate utxos
+	// Start a goroutine to split utxos
 	a.wg.Add(1)
 	go a.splitUtxos(com.split)
 
@@ -258,10 +258,9 @@ func (a *Actor) simulateTx() {
 
 				// Provide a fees of minFee to ensure the tx gets mined
 				amt := utxo.Amount - minFee
-				amounts := map[btcutil.Address]btcutil.Amount{}
-
-				// Send the remaining amount to the address received downstream
-				amounts[addr] = amt
+				amounts := map[btcutil.Address]btcutil.Amount{
+					addr: amt,
+				}
 
 				err := a.sendRawTransaction(inputs, amounts)
 				if err != nil {

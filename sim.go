@@ -32,9 +32,7 @@ type ChainServer struct {
 	cert     []byte
 }
 
-// For now, hardcode a single already-running btcd connection that is used for
-// each actor. This should be changed to start a new btcd with the --simnet
-// flag, and each actor can connect to the spawned btcd process.
+// default server arguments
 var defaultChainServer = ChainServer{
 	connect: "localhost:18556", // local simnet btcd
 	user:    "rpcuser",
@@ -70,8 +68,10 @@ var (
 const (
 	// SimRows is the number of rows in the default curve
 	SimRows = 10
+
 	// SimUtxoCount is the starting number of utxos in the default curve
 	SimUtxoCount = 2000
+
 	// SimTxCount is the starting number of tx in the default curve
 	SimTxCount = 1000
 )
@@ -90,6 +90,8 @@ func main() {
 	// if txCurve is not nil, we control mining so as to
 	// get the same block vs tx count as the input curve
 	if *txCurvePath == "" {
+		// if -txcurve argument is omitted, use a simple
+		// linear simulation curve as the default
 		txCurve = make(map[int32]*Row, SimRows)
 		for i := 1; i < *matureBlock+SimRows; i++ {
 			block := int32(*matureBlock + i)
