@@ -223,9 +223,9 @@ func (a *Actor) simulateTx(downstream <-chan btcutil.Address, txpool chan<- stru
 
 	for {
 		select {
-		case addr := <-downstream:
+		case utxo := <-a.utxoQueue.dequeue:
 			select {
-			case utxo := <-a.utxoQueue.dequeue:
+			case addr := <-downstream:
 				// Create a raw transaction
 				inputs := []btcjson.TransactionInput{{
 					Txid: utxo.OutPoint.Hash.String(),
@@ -269,9 +269,9 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 
 	for {
 		select {
-		case split := <-split:
+		case utxo := <-a.utxoQueue.dequeue:
 			select {
-			case utxo := <-a.utxoQueue.dequeue:
+			case split := <-split:
 				// Create a raw transaction
 				inputs := []btcjson.TransactionInput{{
 					Txid: utxo.OutPoint.Hash.String(),
