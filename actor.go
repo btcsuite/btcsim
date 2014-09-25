@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/conformal/btcchain"
 	"github.com/conformal/btcjson"
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
@@ -27,13 +26,10 @@ import (
 const minFee btcutil.Amount = 1e4 // 0.0001 BTC
 
 // UtxoQueue is the queue of utxos belonging to a actor
-// coinbaseQueue is the queue of coinbases waiting for
-// maturity
 type UtxoQueue struct {
-	utxos         []*TxOut
-	coinbaseQueue chan *btcutil.Tx
-	enqueueUtxo   chan *TxOut
-	dequeueUtxo   chan *TxOut
+	utxos       []*TxOut
+	enqueueUtxo chan *TxOut
+	dequeueUtxo chan *TxOut
 }
 
 // Actor describes an actor on the simulation network.  Each actor runs
@@ -84,9 +80,8 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 		ownedAddresses: make([]btcutil.Address, *maxAddresses),
 		miningAddr:     make(chan btcutil.Address),
 		utxoQueue: UtxoQueue{
-			coinbaseQueue: make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
-			enqueueUtxo:   make(chan *TxOut),
-			dequeueUtxo:   make(chan *TxOut),
+			enqueueUtxo: make(chan *TxOut),
+			dequeueUtxo: make(chan *TxOut),
 		},
 	}
 	return &a, nil

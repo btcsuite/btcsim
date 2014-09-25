@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/conformal/btcchain"
 	"github.com/conformal/btcnet"
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcscript"
@@ -31,20 +32,20 @@ type Block struct {
 // Communication is consisted of the necessary primitives used
 // for communication between the main goroutine and actors.
 type Communication struct {
-	wg           sync.WaitGroup
-	upstream     chan btcutil.Address
-	downstream   chan btcutil.Address
-	timeReceived chan time.Time
-	blockTxCount chan int
-	exit         chan struct{}
-	errChan      chan struct{}
-	height       chan int32
-	split        chan int
-	txpool       chan struct{}
-
-	enqueueBlock chan *Block
-	dequeueBlock chan *Block
-	processed    chan *Block
+	wg            sync.WaitGroup
+	upstream      chan btcutil.Address
+	downstream    chan btcutil.Address
+	timeReceived  chan time.Time
+	blockTxCount  chan int
+	exit          chan struct{}
+	errChan       chan struct{}
+	height        chan int32
+	split         chan int
+	txpool        chan struct{}
+	coinbaseQueue chan *btcutil.Tx
+	enqueueBlock  chan *Block
+	dequeueBlock  chan *Block
+	processed     chan *Block
 }
 
 // NewCommunication creates a new data structure with all the
@@ -52,18 +53,19 @@ type Communication struct {
 // happen.
 func NewCommunication() *Communication {
 	return &Communication{
-		upstream:     make(chan btcutil.Address, 10**maxActors),
-		downstream:   make(chan btcutil.Address, *maxActors),
-		timeReceived: make(chan time.Time, *maxActors),
-		blockTxCount: make(chan int, *maxActors),
-		height:       make(chan int32),
-		split:        make(chan int),
-		txpool:       make(chan struct{}),
-		exit:         make(chan struct{}),
-		errChan:      make(chan struct{}, *maxActors),
-		enqueueBlock: make(chan *Block),
-		dequeueBlock: make(chan *Block),
-		processed:    make(chan *Block),
+		upstream:      make(chan btcutil.Address, 10**maxActors),
+		downstream:    make(chan btcutil.Address, *maxActors),
+		timeReceived:  make(chan time.Time, *maxActors),
+		blockTxCount:  make(chan int, *maxActors),
+		height:        make(chan int32),
+		split:         make(chan int),
+		txpool:        make(chan struct{}),
+		coinbaseQueue: make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
+		exit:          make(chan struct{}),
+		errChan:       make(chan struct{}, *maxActors),
+		enqueueBlock:  make(chan *Block),
+		dequeueBlock:  make(chan *Block),
+		processed:     make(chan *Block),
 	}
 }
 
@@ -212,30 +214,30 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 			for i, tx := range block.Transactions() {
 			next:
 				for n, vout := range tx.MsgTx().TxOut {
-					// fetch actor who owns this output
-					actor, err := com.getActor(actors, vout)
-					if err != nil {
-						log.Printf("Cannot get actor: %v", err)
-						continue next
-					}
 					if i == 0 {
 						// in case of coinbase tx, add it to coinbase queue
 						// if the chan is full, the first tx would be mature
 						// so add it to the pool
 						select {
-						case actor.utxoQueue.coinbaseQueue <- tx:
+						case com.coinbaseQueue <- tx:
 							break next
 						default:
 							// dequeue the first mature tx
-							mTx := <-actor.utxoQueue.coinbaseQueue
+							mTx := <-com.coinbaseQueue
 							// enqueue the latest tx
-							actor.utxoQueue.coinbaseQueue <- tx
+							com.coinbaseQueue <- tx
 							// we'll process the mature tx next
 							// so point tx to mTx
 							tx = mTx
 							// reset vout as per the new tx
 							vout = tx.MsgTx().TxOut[n]
 						}
+					}
+					// fetch actor who owns this output
+					actor, err := com.getActor(actors, vout)
+					if err != nil {
+						log.Printf("Cannot get actor: %v", err)
+						continue next
 					}
 					txout := com.getUtxo(tx, vout, uint32(n))
 					// add utxo to actor's pool
