@@ -241,7 +241,11 @@ func (a *Actor) simulateTx(downstream <-chan btcutil.Address, txpool chan<- stru
 				err := a.sendRawTransaction(inputs, amounts)
 				if err != nil {
 					log.Printf("error sending raw transaction: %v", err)
-					txpool <- struct{}{}
+					select {
+					case txpool <- struct{}{}:
+					case <-a.quit:
+						return
+					}
 					continue
 				}
 
@@ -301,7 +305,11 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 				err := a.sendRawTransaction(inputs, amounts)
 				if err != nil {
 					log.Printf("error sending raw transaction: %v", err)
-					txpool <- struct{}{}
+					select {
+					case txpool <- struct{}{}:
+					case <-a.quit:
+						return
+					}
 					continue
 				}
 
