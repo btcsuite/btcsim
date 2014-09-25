@@ -25,8 +25,8 @@ import (
 // minFee is the minimum tx fee that can be paid
 const minFee btcutil.Amount = 1e4 // 0.0001 BTC
 
-// UtxoQueue is the queue of utxos belonging to a actor
-type UtxoQueue struct {
+// utxoQueue is the queue of utxos belonging to a actor
+type utxoQueue struct {
 	utxos       []*TxOut
 	enqueueUtxo chan *TxOut
 	dequeueUtxo chan *TxOut
@@ -38,14 +38,10 @@ type Actor struct {
 	args           procArgs
 	cmd            *exec.Cmd
 	client         *rpc.Client
-	downstream     chan btcutil.Address
-	upstream       chan btcutil.Address
-	txpool         chan struct{}
-	errChan        chan struct{}
 	quit           chan struct{}
 	wg             sync.WaitGroup
 	ownedAddresses []btcutil.Address
-	utxoQueue      UtxoQueue
+	utxoQueue      *utxoQueue
 	miningAddr     chan btcutil.Address
 }
 
@@ -79,7 +75,7 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 		quit:           make(chan struct{}),
 		ownedAddresses: make([]btcutil.Address, *maxAddresses),
 		miningAddr:     make(chan btcutil.Address),
-		utxoQueue: UtxoQueue{
+		utxoQueue: &utxoQueue{
 			enqueueUtxo: make(chan *TxOut),
 			dequeueUtxo: make(chan *TxOut),
 		},
@@ -99,14 +95,9 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 // be created, the wallet process is killed and the actor directory
 // removed.
 func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
-	a.downstream = com.downstream
-	a.upstream = com.upstream
-	a.errChan = com.errChan
-	a.txpool = com.txpool
-
 	// Overwriting the previously created command would be sad.
 	if a.cmd != nil {
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return errors.New("actor command previously created")
 	}
 
@@ -123,7 +114,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 			log.Printf("Cannot remove actor directory after "+
 				"failed start of wallet process: %v", err)
 		}
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return err
 	}
 
@@ -160,7 +151,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		break
 	}
 	if a.client == nil {
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return connErr
 	}
 
@@ -169,7 +160,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Create the wallet.
 	if err := a.client.CreateEncryptedWallet(a.args.walletPassphrase); err != nil {
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return err
 	}
 
@@ -188,7 +179,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 		addr, err := a.client.GetNewAddress()
 		if err != nil {
 			log.Printf("%s: Cannot create address #%d", rpcConf.Host, i+1)
-			a.errChan <- struct{}{}
+			com.errChan <- struct{}{}
 			return err
 		}
 		a.ownedAddresses[i] = addr
@@ -196,27 +187,12 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
 		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
-		a.errChan <- struct{}{}
+		com.errChan <- struct{}{}
 		return err
 	}
 
-	// Send a random address upstream that will be used by the cpu miner.
+	// Send a random address that will be used by the cpu miner.
 	a.miningAddr <- a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
-
-	// Start a goroutine to send addresses upstream.
-	a.wg.Add(1)
-	go func() {
-		defer a.wg.Done()
-
-		for {
-			select {
-			case a.upstream <- a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]:
-				// Send address to upstream to request receiving a transaction.
-			case <-a.quit:
-				return
-			}
-		}
-	}()
 
 	// Start a goroutine that queues up a set of utxos belonging to this
 	// actor. The utxos are sent from com.poolUtxos which in turn receives
@@ -226,11 +202,11 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Start a goroutine to simulate transactions.
 	a.wg.Add(1)
-	go a.simulateTx()
+	go a.simulateTx(com.downstream, com.txpool)
 
 	// Start a goroutine to split utxos
 	a.wg.Add(1)
-	go a.splitUtxos(com.split)
+	go a.splitUtxos(com.split, com.txpool)
 
 	return nil
 }
@@ -239,12 +215,12 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 //
 // It receives a random address downstream, dequeues a utxo, sends a raw
 // transaction to the address using the utxo as input
-func (a *Actor) simulateTx() {
+func (a *Actor) simulateTx(downstream <-chan btcutil.Address, txpool chan<- struct{}) {
 	defer a.wg.Done()
 
 	for {
 		select {
-		case addr := <-a.downstream:
+		case addr := <-downstream:
 			select {
 			case utxo := <-a.utxoQueue.dequeueUtxo:
 				// Create a raw transaction
@@ -262,9 +238,7 @@ func (a *Actor) simulateTx() {
 				err := a.sendRawTransaction(inputs, amounts)
 				if err != nil {
 					log.Printf("error sending raw transaction: %v", err)
-					if a.txpool != nil {
-						a.txpool <- struct{}{}
-					}
+					txpool <- struct{}{}
 					continue
 				}
 
@@ -283,7 +257,7 @@ func (a *Actor) simulateTx() {
 // It receives a 'split' which is int that indicates the number of resultant utxos
 // the tx is sent to addresses from the same actor since we're only interested in
 // building up the utxo set
-func (a *Actor) splitUtxos(split <-chan int) {
+func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 	defer a.wg.Done()
 
 	for {
@@ -324,9 +298,7 @@ func (a *Actor) splitUtxos(split <-chan int) {
 				err := a.sendRawTransaction(inputs, amounts)
 				if err != nil {
 					log.Printf("error sending raw transaction: %v", err)
-					if a.txpool != nil {
-						a.txpool <- struct{}{}
-					}
+					txpool <- struct{}{}
 					continue
 				}
 
@@ -437,11 +409,7 @@ func (a *Actor) WaitForShutdown() {
 func (a *Actor) drainChans() {
 	for {
 		select {
-		case <-a.downstream:
-		case <-a.upstream:
-		case <-a.txpool:
 		case <-a.utxoQueue.dequeueUtxo:
-		case <-a.errChan:
 		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"os"
 	"os/exec"
 	"sync"
@@ -33,7 +34,6 @@ type Block struct {
 // for communication between the main goroutine and actors.
 type Communication struct {
 	wg            sync.WaitGroup
-	upstream      chan btcutil.Address
 	downstream    chan btcutil.Address
 	timeReceived  chan time.Time
 	blockTxCount  chan int
@@ -53,7 +53,6 @@ type Communication struct {
 // happen.
 func NewCommunication() *Communication {
 	return &Communication{
-		upstream:      make(chan btcutil.Address, 10**maxActors),
 		downstream:    make(chan btcutil.Address, *maxActors),
 		timeReceived:  make(chan time.Time, *maxActors),
 		blockTxCount:  make(chan int, *maxActors),
@@ -493,17 +492,14 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			if totalTx > 0 {
 				log.Printf("Generating %v transactions ...", totalTx)
 				for i := 0; i < totalTx; i++ {
+					a := actors[rand.Int()%len(actors)]
+					addr := a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
 					select {
-					case addr := <-com.upstream:
-						select {
-						case com.downstream <- addr:
-							// For every address sent downstream (one transaction about to happen),
-							// spawn a goroutine to listen for an accepted transaction in the mempool
-							wg.Add(1)
-							go com.txPoolRecv(&wg)
-						case <-com.exit:
-							return
-						}
+					case com.downstream <- addr:
+						// For every address sent downstream (one transaction about to happen),
+						// spawn a goroutine to listen for an accepted transaction in the mempool
+						wg.Add(1)
+						go com.txPoolRecv(&wg)
 					case <-com.exit:
 						return
 					}
