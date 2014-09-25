@@ -26,10 +26,13 @@ import (
 const minFee btcutil.Amount = 1e4 // 0.0001 BTC
 
 // utxoQueue is the queue of utxos belonging to a actor
+// utxos are queued after a block is received and are dispatched
+// to their respective owner from com.poolUtxos
+// they are dequeued from simulateTx and splitUtxos
 type utxoQueue struct {
-	utxos       []*TxOut
-	enqueueUtxo chan *TxOut
-	dequeueUtxo chan *TxOut
+	utxos   []*TxOut
+	enqueue chan *TxOut
+	dequeue chan *TxOut
 }
 
 // Actor describes an actor on the simulation network.  Each actor runs
@@ -76,8 +79,8 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 		ownedAddresses: make([]btcutil.Address, *maxAddresses),
 		miningAddr:     make(chan btcutil.Address),
 		utxoQueue: &utxoQueue{
-			enqueueUtxo: make(chan *TxOut),
-			dequeueUtxo: make(chan *TxOut),
+			enqueue: make(chan *TxOut),
+			dequeue: make(chan *TxOut),
 		},
 	}
 	return &a, nil
@@ -222,7 +225,7 @@ func (a *Actor) simulateTx(downstream <-chan btcutil.Address, txpool chan<- stru
 		select {
 		case addr := <-downstream:
 			select {
-			case utxo := <-a.utxoQueue.dequeueUtxo:
+			case utxo := <-a.utxoQueue.dequeue:
 				// Create a raw transaction
 				inputs := []btcjson.TransactionInput{{
 					Txid: utxo.OutPoint.Hash.String(),
@@ -264,7 +267,7 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 		select {
 		case split := <-split:
 			select {
-			case utxo := <-a.utxoQueue.dequeueUtxo:
+			case utxo := <-a.utxoQueue.dequeue:
 				// Create a raw transaction
 				inputs := []btcjson.TransactionInput{{
 					Txid: utxo.OutPoint.Hash.String(),
@@ -336,7 +339,7 @@ func (a *Actor) sendRawTransaction(inputs []btcjson.TransactionInput, amounts ma
 func (a *Actor) queueUtxos() {
 	defer a.wg.Done()
 
-	enqueue := a.utxoQueue.enqueueUtxo
+	enqueue := a.utxoQueue.enqueue
 	var dequeue chan *TxOut
 	var next *TxOut
 out:
@@ -344,7 +347,7 @@ out:
 		select {
 		case n, ok := <-enqueue:
 			if !ok {
-				// If no a.utxos are queued for handling,
+				// If no utxos are queued for handling,
 				// the queue is finished.
 				if len(a.utxoQueue.utxos) == 0 {
 					break out
@@ -355,7 +358,7 @@ out:
 			}
 			if len(a.utxoQueue.utxos) == 0 {
 				next = n
-				dequeue = a.utxoQueue.dequeueUtxo
+				dequeue = a.utxoQueue.dequeue
 			}
 			a.utxoQueue.utxos = append(a.utxoQueue.utxos, n)
 		case dequeue <- next:
@@ -364,7 +367,7 @@ out:
 			if len(a.utxoQueue.utxos) != 0 {
 				next = a.utxoQueue.utxos[0]
 			} else {
-				// If no more a.utxos can be enqueued, the
+				// If no more utxos can be enqueued, the
 				// queue is finished.
 				if enqueue == nil {
 					break out
@@ -375,7 +378,7 @@ out:
 			break out
 		}
 	}
-	close(a.utxoQueue.dequeueUtxo)
+	close(a.utxoQueue.dequeue)
 }
 
 // Shutdown performs a shutdown down the actor by first signalling
@@ -409,7 +412,7 @@ func (a *Actor) WaitForShutdown() {
 func (a *Actor) drainChans() {
 	for {
 		select {
-		case <-a.utxoQueue.dequeueUtxo:
+		case <-a.utxoQueue.dequeue:
 		}
 	}
 }

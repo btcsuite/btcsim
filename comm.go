@@ -240,7 +240,7 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 					}
 					txout := com.getUtxo(tx, vout, uint32(n))
 					// add utxo to actor's pool
-					actor.utxoQueue.enqueueUtxo <- txout
+					actor.utxoQueue.enqueue <- txout
 				}
 			}
 			// allow Communicate to sync with the processed block
