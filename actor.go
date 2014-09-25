@@ -50,6 +50,7 @@ type Actor struct {
 	wg             sync.WaitGroup
 	ownedAddresses []btcutil.Address
 	utxoQueue      UtxoQueue
+	miningAddr     chan btcutil.Address
 }
 
 // TxOut is a valid tx output that can be used to generate transactions
@@ -81,6 +82,7 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 		},
 		quit:           make(chan struct{}),
 		ownedAddresses: make([]btcutil.Address, *maxAddresses),
+		miningAddr:     make(chan btcutil.Address),
 		utxoQueue: UtxoQueue{
 			coinbaseQueue: make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
 			enqueueUtxo:   make(chan *TxOut),
@@ -204,7 +206,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	}
 
 	// Send a random address upstream that will be used by the cpu miner.
-	a.upstream <- a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
+	a.miningAddr <- a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
 
 	// Start a goroutine to send addresses upstream.
 	a.wg.Add(1)

@@ -90,10 +90,10 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client,
 	com.wg.Add(1)
 	go com.failedActors()
 
-	addressTable := make([]btcutil.Address, *maxActors)
+	miningAddrs := make([]btcutil.Address, *maxActors)
 	for i, a := range actors {
 		select {
-		case addressTable[i] = <-com.upstream:
+		case miningAddrs[i] = <-a.miningAddr:
 		case <-a.quit:
 			// This actor has quit
 			select {
@@ -107,7 +107,7 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client,
 	}
 
 	// Start mining.
-	miner, err := NewMiner(addressTable, com.exit, com.height, com.txpool)
+	miner, err := NewMiner(miningAddrs, com.exit, com.height, com.txpool)
 	if err != nil {
 		safeClose(com.exit) // make failedActors goroutine exit
 		close(tpsChan)

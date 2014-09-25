@@ -30,7 +30,7 @@ type Miner struct {
 
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
 // to control it.
-func NewMiner(addressTable []btcutil.Address, exit chan struct{},
+func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 	height chan<- int32, txpool chan<- struct{}) (*Miner, error) {
 
 	datadir, err := ioutil.TempDir("", "minerData")
@@ -62,7 +62,7 @@ func NewMiner(addressTable []btcutil.Address, exit chan struct{},
 		fmt.Sprintf("--blockmaxsize=%d", *maxBlockSize),
 	}
 
-	for _, addr := range addressTable {
+	for _, addr := range miningAddrs {
 		minerArgs = append(minerArgs, "--miningaddr="+addr.EncodeAddress())
 	}
 
