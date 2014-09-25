@@ -30,6 +30,14 @@ type Block struct {
 	height int32
 }
 
+// blockQueue is a queue of blocks received from OnBlockConnected
+// waiting to be processed
+type blockQueue struct {
+	enqueue   chan *Block
+	dequeue   chan *Block
+	processed chan *Block
+}
+
 // Communication is consisted of the necessary primitives used
 // for communication between the main goroutine and actors.
 type Communication struct {
@@ -43,9 +51,7 @@ type Communication struct {
 	split         chan int
 	txpool        chan struct{}
 	coinbaseQueue chan *btcutil.Tx
-	enqueueBlock  chan *Block
-	dequeueBlock  chan *Block
-	processed     chan struct{}
+	blockQueue    *blockQueue
 }
 
 // NewCommunication creates a new data structure with all the
@@ -62,9 +68,11 @@ func NewCommunication() *Communication {
 		coinbaseQueue: make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
 		exit:          make(chan struct{}),
 		errChan:       make(chan struct{}, *maxActors),
-		enqueueBlock:  make(chan *Block),
-		dequeueBlock:  make(chan *Block),
-		processed:     make(chan struct{}),
+		blockQueue: &blockQueue{
+			enqueue:   make(chan *Block),
+			dequeue:   make(chan *Block),
+			processed: make(chan *Block),
+		},
 	}
 }
 
@@ -151,7 +159,7 @@ func (com *Communication) queueBlocks() {
 	defer com.wg.Done()
 
 	var blocks []*Block
-	enqueue := com.enqueueBlock
+	enqueue := com.blockQueue.enqueue
 	var dequeue chan *Block
 	var next *Block
 out:
@@ -170,7 +178,7 @@ out:
 			}
 			if len(blocks) == 0 {
 				next = n
-				dequeue = com.dequeueBlock
+				dequeue = com.blockQueue.dequeue
 			}
 			blocks = append(blocks, n)
 		case dequeue <- next:
@@ -190,7 +198,7 @@ out:
 			break out
 		}
 	}
-	close(com.dequeueBlock)
+	close(com.blockQueue.dequeue)
 }
 
 // poolUtxos receives a new block notification from the chain server
@@ -200,7 +208,7 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 	// Update utxo pool on each block connected
 	for {
 		select {
-		case b, ok := <-com.dequeueBlock:
+		case b, ok := <-com.blockQueue.dequeue:
 			if !ok {
 				return
 			}
@@ -253,7 +261,7 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 				log.Printf("%v: block# %v: no of utxos: %v, no of transactions: %v", b.height,
 					b.hash, utxoCount, txCount)
 				select {
-				case com.processed <- struct{}{}:
+				case com.blockQueue.processed <- b:
 				case <-com.exit:
 					return
 				}
@@ -401,7 +409,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 
 			// wait until this block is processed
 			select {
-			case <-com.processed:
+			case <-com.blockQueue.processed:
 			case <-com.exit:
 				return
 			}

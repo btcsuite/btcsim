@@ -175,7 +175,7 @@ func main() {
 				height: height,
 			}
 			select {
-			case com.enqueueBlock <- block:
+			case com.blockQueue.enqueue <- block:
 			case <-com.exit:
 			}
 		},
