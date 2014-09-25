@@ -378,8 +378,8 @@ out:
 	close(a.utxoQueue.dequeueUtxo)
 }
 
-// Stop closes the client and quit channel so every running goroutine
-// can return or just exits if quit has already been closed.
+// Shutdown performs a shutdown down the actor by first signalling
+// all goroutines to stop, waiting for them to stop and them cleaning up
 func (a *Actor) Shutdown() {
 	select {
 	case <-a.quit:
