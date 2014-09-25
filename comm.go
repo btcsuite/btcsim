@@ -45,7 +45,7 @@ type Communication struct {
 	coinbaseQueue chan *btcutil.Tx
 	enqueueBlock  chan *Block
 	dequeueBlock  chan *Block
-	processed     chan *Block
+	processed     chan struct{}
 }
 
 // NewCommunication creates a new data structure with all the
@@ -65,7 +65,7 @@ func NewCommunication() *Communication {
 		errChan:       make(chan struct{}, *maxActors),
 		enqueueBlock:  make(chan *Block),
 		dequeueBlock:  make(chan *Block),
-		processed:     make(chan *Block),
+		processed:     make(chan struct{}),
 	}
 }
 
@@ -254,7 +254,7 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 				log.Printf("%v: block# %v: no of utxos: %v, no of transactions: %v", b.height,
 					b.hash, utxoCount, txCount)
 				select {
-				case com.processed <- b:
+				case com.processed <- struct{}{}:
 				case <-com.exit:
 					return
 				}
