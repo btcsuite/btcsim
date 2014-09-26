@@ -286,9 +286,9 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 
 				// Create a output of random amount and sent it
 				// to a random address from the address space
-				// Iteration is split+1 times taking into account this utxo
-				// which is consumed in the process
-				for i := 0; i < split+1; i++ {
+				// total number of outputs is split+1, taking into
+				// account this utxo which is consumed in the process
+				for i := 0; i < split; i++ {
 					// skip if this amt can't be split any further
 					if amt > minFee {
 						// pick a random address
@@ -302,6 +302,11 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 						amounts[to] = change
 						amt -= change
 					}
+				}
+				if amt > minFee {
+					// if the remaining amount is not dust, send it another rand addr
+					to := a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
+					amounts[to] = amt
 				}
 
 				err := a.sendRawTransaction(inputs, amounts)
