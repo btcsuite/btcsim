@@ -105,7 +105,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, h int32) {
 			fmt.Printf("+")
-			if h == int32(*maxBlocks) {
+			if h > int32(*maxBlocks) {
 				safeClose(exit)
 			}
 			if h >= int32(*matureBlock)-1 {

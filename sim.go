@@ -93,7 +93,7 @@ func main() {
 		// if -txcurve argument is omitted, use a simple
 		// linear simulation curve as the default
 		txCurve = make(map[int32]*Row, SimRows)
-		for i := 1; i < *matureBlock+SimRows; i++ {
+		for i := 1; i <= SimRows; i++ {
 			block := int32(*matureBlock + i)
 			txCurve[block] = &Row{
 				utxoCount: i * SimUtxoCount,
@@ -120,7 +120,7 @@ func main() {
 	com := NewCommunication()
 	// we need only enough blocks after matureBlock
 	// to generate the tx curve
-	*maxBlocks = *matureBlock + len(txCurve)
+	*maxBlocks = *matureBlock + len(txCurve) + 1
 
 	btcdHomeDir := btcutil.AppDataDir("btcd", false)
 	defaultChainServer.certPath = filepath.Join(btcdHomeDir, "rpc.cert")
