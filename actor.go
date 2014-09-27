@@ -288,25 +288,32 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 				// to a random address from the address space
 				// total number of outputs is split+1, taking into
 				// account this utxo which is consumed in the process
-				for i := 0; i < split; i++ {
-					// skip if this amt can't be split any further
-					if amt > minFee {
-						// pick a random address
-						to := a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
+
+				// set a rand start index for getting different random addrs
+				randomIndex := rand.Int() % len(a.ownedAddresses)
+				for i := 0; i <= split; i++ {
+					var to btcutil.Address
+					var change btcutil.Amount
+					// pick a random address
+					if randomIndex+i < len(a.ownedAddresses) {
+						to = a.ownedAddresses[randomIndex+i]
+					} else {
+						// wrap around incase of an overflow
+						to = a.ownedAddresses[randomIndex+i-len(a.ownedAddresses)]
+					}
+					if i == split {
+						// last split, so just set the change
+						change = amt
+					} else {
 						// pick a random change amount which is less than amt
 						// but have a lower bound at minFee
-						change := btcutil.Amount(rand.Int63n(int64(amt) / 2))
+						change = btcutil.Amount(rand.Int63n(int64(amt) / 2))
 						if change < minFee {
 							change = minFee
 						}
-						amounts[to] = change
 						amt -= change
 					}
-				}
-				if amt > minFee {
-					// if the remaining amount is not dust, send it another rand addr
-					to := a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
-					amounts[to] = amt
+					amounts[to] = change
 				}
 
 				err := a.sendRawTransaction(inputs, amounts)
