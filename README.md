@@ -31,15 +31,15 @@ transactions are created.
 
 ## Components
 
-### Chain Server
+### Node
 
-The Chain Server is the first `btcd` node that is launched. It serves as a
-common node to all the actors and a peer for the miner.
+This is the first `btcd` node that is launched. It acts as the server for all
+Actors and as a peer for the miner.
 
 ### Actor
 
 An Actor simulates a wallet "Agent" by launching a `btcwallet` instance which
-connects to the chain server node. It is responsible for generating
+connects to the node server. It is responsible for generating
 transactions among itself as well as other actors. Multiple actors can be
 launched simultaneously to simulate a large load due to a heavy multi-user
 system.
@@ -47,7 +47,7 @@ system.
 ### Miner
 
 The Miner launches a `btcd` instance and simulates a mining node. It is
-connected to the chain server node using the `addnode` RPC call. It is
+connected to the node server using the `addnode` RPC call. It is
 responsible for collecting transactions and mining them when required.
 
 ## Installation

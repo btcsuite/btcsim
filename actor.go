@@ -6,13 +6,10 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"math/rand"
-	"os"
-	"os/exec"
-	"strconv"
 	"sync"
 	"time"
 
@@ -38,14 +35,13 @@ type utxoQueue struct {
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
 type Actor struct {
-	args           procArgs
-	cmd            *exec.Cmd
-	client         *rpc.Client
-	quit           chan struct{}
-	wg             sync.WaitGroup
-	ownedAddresses []btcutil.Address
-	utxoQueue      *utxoQueue
-	miningAddr     chan btcutil.Address
+	*Node
+	quit             chan struct{}
+	wg               sync.WaitGroup
+	ownedAddresses   []btcutil.Address
+	utxoQueue        *utxoQueue
+	miningAddr       chan btcutil.Address
+	walletPassphrase string
 }
 
 // TxOut is a valid tx output that can be used to generate transactions
@@ -55,29 +51,35 @@ type TxOut struct {
 }
 
 // NewActor creates a new actor which runs its own wallet process connecting
-// to the btcd chain server specified by chain, and listening for simulator
+// to the btcd node server specified by node, and listening for simulator
 // websocket connections on the specified port.
-func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
+func NewActor(node *Node, port uint16) (*Actor, error) {
 	// Please don't run this as root.
 	if port < 1024 {
 		return nil, errors.New("invalid actor port")
 	}
 
-	dir, err := ioutil.TempDir("", "actor")
+	// Set btcwallet node args
+	args, err := NewBtcwalletArgs(port, node.Args.(*btcdArgs))
+	if err != nil {
+		return nil, err
+	}
+
+	logFile, err := getLogFile(args.prefix)
+	if err != nil {
+		log.Printf("Cannot get log file, logging disabled: %v", err)
+	}
+	btcwallet, err := NewNodeFromArgs(args, nil, logFile)
 	if err != nil {
 		return nil, err
 	}
 
 	a := Actor{
-		args: procArgs{
-			chainSvr:         *chain,
-			dir:              dir,
-			port:             strconv.FormatUint(uint64(port), 10),
-			walletPassphrase: "walletpass",
-		},
-		quit:           make(chan struct{}),
-		ownedAddresses: make([]btcutil.Address, *maxAddresses),
-		miningAddr:     make(chan btcutil.Address),
+		Node:             btcwallet,
+		quit:             make(chan struct{}),
+		ownedAddresses:   make([]btcutil.Address, *maxAddresses),
+		miningAddr:       make(chan btcutil.Address),
+		walletPassphrase: "walletpass",
 		utxoQueue: &utxoQueue{
 			enqueue: make(chan *TxOut),
 			dequeue: make(chan *TxOut),
@@ -98,40 +100,17 @@ func NewActor(chain *ChainServer, port uint16) (*Actor, error) {
 // be created, the wallet process is killed and the actor directory
 // removed.
 func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
-	// Overwriting the previously created command would be sad.
-	if a.cmd != nil {
-		com.errChan <- struct{}{}
-		return errors.New("actor command previously created")
-	}
-
 	connected := make(chan struct{})
 	var firstConn bool
 	const timeoutSecs int64 = 3600 * 24
 
-	// Create and start command in background.
-	a.cmd = a.args.Cmd()
-	a.cmd.Stdout = stdout
-	a.cmd.Stderr = stderr
-	if err := a.cmd.Start(); err != nil {
-		if err := a.Cleanup(); err != nil {
-			log.Printf("Cannot remove actor directory after "+
-				"failed start of wallet process: %v", err)
-		}
+	if err := a.Node.Start(); err != nil {
+		a.Shutdown()
 		com.errChan <- struct{}{}
 		return err
 	}
 
-	// Create and start RPC client.
-	rpcConf := rpc.ConnConfig{
-		Host:                 "localhost:" + a.args.port,
-		Endpoint:             "ws",
-		User:                 a.args.chainSvr.user,
-		Pass:                 a.args.chainSvr.pass,
-		Certificates:         a.args.chainSvr.cert,
-		DisableAutoReconnect: true,
-	}
-
-	ntfnHandlers := rpc.NotificationHandlers{
+	ntfnHandlers := &rpc.NotificationHandlers{
 		OnBtcdConnected: func(conn bool) {
 			if conn && !firstConn {
 				firstConn = true
@@ -139,30 +118,19 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 			}
 		},
 	}
+	a.handlers = ntfnHandlers
 
-	// The RPC client will not wait for the RPC server to start up, so
-	// loop a few times and attempt additional connections, sleeping
-	// after each failure.
-	var client *rpc.Client
-	var connErr error
-	for i := 0; i < *maxConnRetries; i++ {
-		if client, connErr = rpc.New(&rpcConf, &ntfnHandlers); connErr != nil {
-			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
-			continue
-		}
-		a.client = client
-		break
-	}
-	if a.client == nil {
+	if err := a.Connect(); err != nil {
+		a.Shutdown()
 		com.errChan <- struct{}{}
-		return connErr
+		return err
 	}
 
 	// Wait for btcd to connect
 	<-connected
 
 	// Create the wallet.
-	if err := a.client.CreateEncryptedWallet(a.args.walletPassphrase); err != nil {
+	if err := a.client.CreateEncryptedWallet(a.walletPassphrase); err != nil {
 		com.errChan <- struct{}{}
 		return err
 	}
@@ -177,19 +145,21 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	}
 
 	// Create wallet addresses and unlock wallet.
-	log.Printf("%s: Creating wallet addresses. This may take a while...", rpcConf.Host)
+	log.Printf("%s: Creating wallet addresses...", a)
 	for i := range a.ownedAddresses {
+		fmt.Printf("\r%d/%d", i+1, len(a.ownedAddresses))
 		addr, err := a.client.GetNewAddress()
 		if err != nil {
-			log.Printf("%s: Cannot create address #%d", rpcConf.Host, i+1)
+			log.Printf("%s: Cannot create address #%d", a, i+1)
 			com.errChan <- struct{}{}
 			return err
 		}
 		a.ownedAddresses[i] = addr
 	}
+	fmt.Printf("\n")
 
-	if err := a.client.WalletPassphrase(a.args.walletPassphrase, timeoutSecs); err != nil {
-		log.Printf("%s: Cannot unlock wallet: %v", rpcConf.Host, err)
+	if err := a.client.WalletPassphrase(a.walletPassphrase, timeoutSecs); err != nil {
+		log.Printf("%s: Cannot unlock wallet: %v", a, err)
 		com.errChan <- struct{}{}
 		return err
 	}
@@ -241,7 +211,7 @@ func (a *Actor) simulateTx(downstream <-chan btcutil.Address, txpool chan<- stru
 
 				err := a.sendRawTransaction(inputs, amounts)
 				if err != nil {
-					log.Printf("error sending raw transaction: %v", err)
+					log.Printf("%s: Error sending raw transaction: %v", a, err)
 					select {
 					case txpool <- struct{}{}:
 					case <-a.quit:
@@ -318,7 +288,7 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 
 				err := a.sendRawTransaction(inputs, amounts)
 				if err != nil {
-					log.Printf("error sending raw transaction: %v", err)
+					log.Printf("%s: Error sending raw transaction: %v", a, err)
 					select {
 					case txpool <- struct{}{}:
 					case <-a.quit:
@@ -410,61 +380,12 @@ func (a *Actor) Shutdown() {
 	case <-a.quit:
 	default:
 		close(a.quit)
-		go a.drainChans()
 		a.WaitForShutdown()
-		if a.client != nil {
-			a.client.Shutdown()
-		}
-		if err := Exit(a.cmd); err != nil {
-			log.Printf("Cannot exit actor on %s: %v", "localhost:"+a.args.port, err)
-		}
-		if err := a.Cleanup(); err != nil {
-			log.Printf("Cannot cleanup actor directory on %s: %v", "localhost:"+a.args.port, err)
-		}
-		log.Printf("Actor on %s shutdown successfully", "localhost:"+a.args.port)
+		a.Node.Shutdown()
 	}
 }
 
 // WaitForShutdown waits until every actor goroutine has returned
 func (a *Actor) WaitForShutdown() {
 	a.wg.Wait()
-}
-
-// drainChans drains all chans that might block an actor from shutting down
-func (a *Actor) drainChans() {
-	for {
-		select {
-		case <-a.utxoQueue.dequeue:
-		}
-	}
-}
-
-// Cleanup removes the directory an Actor's wallet process was previously using.
-func (a *Actor) Cleanup() error {
-	return os.RemoveAll(a.args.dir)
-}
-
-type procArgs struct {
-	chainSvr         ChainServer
-	dir              string
-	port             string
-	walletPassphrase string
-}
-
-func (p *procArgs) Cmd() *exec.Cmd {
-	return exec.Command("btcwallet", p.args()...)
-}
-
-func (p *procArgs) args() []string {
-	return []string{
-		"-d" + "TXST=warn",
-		"--simnet",
-		"--datadir=" + p.dir,
-		"--username=" + p.chainSvr.user,
-		"--password=" + p.chainSvr.pass,
-		"--rpcconnect=" + p.chainSvr.connect,
-		"--rpclisten=:" + p.port,
-		"--rpccert=" + p.chainSvr.certPath,
-		"--rpckey=" + p.chainSvr.keyPath,
-	}
 }

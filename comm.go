@@ -11,7 +11,6 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -59,15 +58,15 @@ type Communication struct {
 // happen.
 func NewCommunication() *Communication {
 	return &Communication{
-		downstream:    make(chan btcutil.Address, *maxActors),
-		timeReceived:  make(chan time.Time, *maxActors),
-		blockTxCount:  make(chan int, *maxActors),
+		downstream:    make(chan btcutil.Address, *numActors),
+		timeReceived:  make(chan time.Time, *numActors),
+		blockTxCount:  make(chan int, *numActors),
 		height:        make(chan int32),
 		split:         make(chan int),
 		txpool:        make(chan struct{}),
 		coinbaseQueue: make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
 		exit:          make(chan struct{}),
-		errChan:       make(chan struct{}, *maxActors),
+		errChan:       make(chan struct{}, *numActors),
 		blockQueue: &blockQueue{
 			enqueue:   make(chan *Block),
 			dequeue:   make(chan *Block),
@@ -78,8 +77,7 @@ func NewCommunication() *Communication {
 
 // Start handles the main part of a simulation by starting
 // all the necessary goroutines.
-func (com *Communication) Start(actors []*Actor, client *rpc.Client,
-	btcd *exec.Cmd, txCurve map[int32]*Row) (tpsChan chan float64, tpbChan chan int) {
+func (com *Communication) Start(actors []*Actor, node *Node, txCurve map[int32]*Row) (tpsChan chan float64, tpbChan chan int) {
 	tpsChan = make(chan float64, 1)
 	tpbChan = make(chan int, 1)
 
@@ -89,8 +87,9 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client,
 		go func(a *Actor, com *Communication) {
 			defer com.wg.Done()
 			if err := a.Start(os.Stderr, os.Stdout, com); err != nil {
-				log.Printf("Cannot start actor on %s: %v", "localhost:"+a.args.port, err)
+				log.Printf("%s: Cannot start actor: %v", a, err)
 				a.Shutdown()
+				node.Shutdown()
 			}
 		}(a, com)
 	}
@@ -99,7 +98,7 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client,
 	com.wg.Add(1)
 	go com.failedActors()
 
-	miningAddrs := make([]btcutil.Address, *maxActors)
+	miningAddrs := make([]btcutil.Address, *numActors)
 	for i, a := range actors {
 		select {
 		case miningAddrs[i] = <-a.miningAddr:
@@ -118,16 +117,16 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client,
 	// Start mining.
 	miner, err := NewMiner(miningAddrs, com.exit, com.height, com.txpool)
 	if err != nil {
-		safeClose(com.exit) // make failedActors goroutine exit
+		close(com.exit)
 		close(tpsChan)
 		close(tpbChan)
 		com.wg.Add(1)
-		go com.Shutdown(miner, actors, btcd)
+		go com.Shutdown(miner, actors, node)
 		return
 	}
 
-	// Add mining btcd listen interface as a node
-	client.AddNode("localhost:18550", rpc.ANAdd)
+	// Add mining node listen interface as a node
+	node.client.AddNode("localhost:18550", rpc.ANAdd)
 
 	// Start a goroutine to estimate tps
 	com.wg.Add(1)
@@ -145,11 +144,11 @@ func (com *Communication) Start(actors []*Actor, client *rpc.Client,
 	go com.queueBlocks()
 
 	com.wg.Add(1)
-	go com.poolUtxos(client, actors)
+	go com.poolUtxos(node.client, actors)
 
 	// Start a goroutine for shuting down the simulation when appropriate
 	com.wg.Add(1)
-	go com.Shutdown(miner, actors, btcd)
+	go com.Shutdown(miner, actors, node)
 
 	return
 }
@@ -201,7 +200,7 @@ out:
 	close(com.blockQueue.dequeue)
 }
 
-// poolUtxos receives a new block notification from the chain server
+// poolUtxos receives a new block notification from the node server
 // and pools the newly mined utxos to the corresponding actor's a.utxo
 func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 	defer com.wg.Done()
@@ -241,10 +240,15 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 						}
 					}
 					// fetch actor who owns this output
-					actor, err := com.getActor(actors, vout)
-					if err != nil {
-						log.Printf("Cannot get actor: %v", err)
-						continue next
+					var actor *Actor
+					if len(actors) == 1 {
+						actor = actors[0]
+					} else {
+						actor, err = com.getActor(actors, vout)
+						if err != nil {
+							log.Printf("Cannot get actor: %v", err)
+							continue next
+						}
 					}
 					txout := com.getUtxo(tx, vout, uint32(n))
 					// to be usable, the utxo amount should be
@@ -306,7 +310,7 @@ func (com *Communication) getActor(actors []*Actor,
 			}
 		}
 	}
-	err = errors.New("Cannot find any actor who owns this tx output")
+	err = errors.New("cannot find any actor who owns this tx output")
 	return nil, err
 }
 
@@ -333,8 +337,8 @@ func (com *Communication) failedActors() {
 			failedActors++
 
 			// All actors have failed
-			if failedActors == *maxActors {
-				safeClose(com.exit)
+			if failedActors == *numActors {
+				close(com.exit)
 				return
 			}
 		case <-com.exit:
@@ -410,7 +414,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 
 			// disable mining until the required no. of tx are in mempool
 			if err := miner.StopMining(); err != nil {
-				safeClose(com.exit)
+				close(com.exit)
 				return
 			}
 
@@ -506,11 +510,12 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 				totalTx = reqTxCount - totalUtxos
 			}
 
-			log.Printf("=== row: %v === next block utxos: %v === transactions: %v", h, next.utxoCount, row.txCount)
-
+			if reqTxCount > 0 {
+				log.Printf("Generating %v transactions ...", reqTxCount)
+			}
 			if totalTx > 0 {
-				log.Printf("Generating %v transactions ...", totalTx)
 				for i := 0; i < totalTx; i++ {
+					fmt.Printf("\r%d/%d", i+1, reqTxCount)
 					a := actors[rand.Int()%len(actors)]
 					addr := a.ownedAddresses[rand.Int()%len(a.ownedAddresses)]
 					select {
@@ -526,9 +531,8 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			}
 
 			if totalUtxos > 0 {
-				fmt.Printf("\n")
-				log.Printf("Generating %v utxos by creating %v transactions with %v net outputs each ...", reqUtxoCount, totalUtxos, multiplier)
 				for i := 0; i < totalUtxos; i++ {
+					fmt.Printf("\r%d/%d", i+totalTx+1, reqTxCount)
 					select {
 					case com.split <- multiplier:
 						// For every address sent downstream (one transaction about to happen),
@@ -541,11 +545,11 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 				}
 			}
 
+			fmt.Printf("\nWaiting for miner...")
 			wg.Wait()
-			fmt.Printf("\n")
 			// mine the above tx in the next block
 			if err := miner.StartMining(); err != nil {
-				safeClose(com.exit)
+				close(com.exit)
 				return
 			}
 		case <-com.exit:
@@ -555,8 +559,8 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 }
 
 // Shutdown shuts down the simulation by killing the mining and the
-// initial btcd processes and shuts down all actors.
-func (com *Communication) Shutdown(miner *Miner, actors []*Actor, btcd *exec.Cmd) {
+// initial node processes and shuts down all actors.
+func (com *Communication) Shutdown(miner *Miner, actors []*Actor, node *Node) {
 	defer com.wg.Done()
 
 	<-com.exit
@@ -566,8 +570,8 @@ func (com *Communication) Shutdown(miner *Miner, actors []*Actor, btcd *exec.Cmd
 	for _, a := range actors {
 		a.Shutdown()
 	}
-	if err := Exit(btcd); err != nil {
-		log.Printf("Cannot kill initial btcd process: %v", err)
+	if node != nil {
+		node.Shutdown()
 	}
 }
 

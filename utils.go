@@ -6,9 +6,13 @@ package main
 
 import (
 	"encoding/csv"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
+
+	"github.com/conformal/btcutil"
 )
 
 // Row represents a row in the CSV file
@@ -20,14 +24,9 @@ type Row struct {
 
 // readCSV reads the given filename and
 // returns a slice of rows
-func readCSV(f string) (map[int32]*Row, error) {
-	file, err := os.Open(f)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
+func readCSV(r io.Reader) (map[int32]*Row, error) {
 	m := make(map[int32]*Row)
-	reader := csv.NewReader(file)
+	reader := csv.NewReader(r)
 	for {
 		row, err := reader.Read()
 		if err == io.EOF {
@@ -50,4 +49,31 @@ func readCSV(f string) (map[int32]*Row, error) {
 		m[int32(b)] = &Row{u, t}
 	}
 	return m, nil
+}
+
+func getAppDir() (string, error) {
+	dir := btcutil.AppDataDir("btcsim", false)
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(dir, 0700); err != nil {
+				return dir, err
+			}
+		} else {
+			return dir, err
+		}
+	}
+	return dir, nil
+}
+
+func getLogFile(prefix string) (*os.File, error) {
+	var logFile *os.File
+	dir, err := getAppDir()
+	if err != nil {
+		return logFile, err
+	}
+	logFile, err = os.Create(filepath.Join(dir, fmt.Sprintf("%s.log", prefix)))
+	if err != nil {
+		return logFile, err
+	}
+	return logFile, nil
 }

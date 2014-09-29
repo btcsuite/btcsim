@@ -6,12 +6,7 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"time"
 
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcutil"
@@ -21,11 +16,7 @@ import (
 // Miner holds all the core features required to register, run, control,
 // and kill a cpu-mining btcd instance.
 type Miner struct {
-	cmd     *exec.Cmd
-	client  *rpc.Client
-	datadir string
-	logdir  string
-	closed  bool
+	*Node
 }
 
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
@@ -33,93 +24,27 @@ type Miner struct {
 func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 	height chan<- int32, txpool chan<- struct{}) (*Miner, error) {
 
-	datadir, err := ioutil.TempDir("", "minerData")
-	if err != nil {
-		return nil, err
-	}
-	logdir, err := ioutil.TempDir("", "minerLogs")
-	if err != nil {
-		return nil, err
-	}
-
-	miner := &Miner{
-		datadir: datadir,
-		logdir:  logdir,
-	}
-
-	minerArgs := []string{
-		"--simnet",
-		"-u" + defaultChainServer.user,
-		"-P" + defaultChainServer.pass,
-		"--datadir=" + miner.datadir,
-		"--logdir=" + miner.logdir,
-		"--rpccert=" + defaultChainServer.certPath,
-		"--rpckey=" + defaultChainServer.keyPath,
-		"--listen=:18550",
-		"--rpclisten=:18551",
-		"--generate",
-		"-dMINR=trace",
-		fmt.Sprintf("--blockmaxsize=%d", *maxBlockSize),
-	}
-
-	for _, addr := range miningAddrs {
-		minerArgs = append(minerArgs, "--miningaddr="+addr.EncodeAddress())
-	}
-
-	miner.cmd = exec.Command("btcd", minerArgs...)
-	btcsimHomeDir := btcutil.AppDataDir("btcsim", false)
-	if _, err := os.Stat(btcsimHomeDir); err != nil {
-		if os.IsNotExist(err) {
-			if err := os.Mkdir(btcsimHomeDir, 0700); err != nil {
-				log.Printf("Warning: error creating home dir; logging disabled: %v", err)
-			}
-		} else {
-			log.Printf("Warning: error finding home dir; logging disabled: %v", err)
-		}
-	}
-	debugLog, err := os.Create(filepath.Join(btcsimHomeDir, "miner.log"))
-	if err != nil {
-		log.Printf("Warning: error creating log file; logging disabled: %v", err)
-	} else {
-		miner.cmd.Stdout = debugLog
-		miner.cmd.Stderr = debugLog
-	}
-	if err := miner.cmd.Start(); err != nil {
-		log.Printf("%s: Cannot start cpu miner: %v", defaultChainServer.connect, err)
-		return nil, err
-	}
-
-	// RPC mining client initialization.
-	rpcConf := rpc.ConnConfig{
-		Host:                 "localhost:18551",
-		Endpoint:             "ws",
-		User:                 defaultChainServer.user,
-		Pass:                 defaultChainServer.pass,
-		Certificates:         defaultChainServer.cert,
-		DisableAutoReconnect: true,
-	}
-
-	ntfnHandlers := rpc.NotificationHandlers{
+	ntfnHandlers := &rpc.NotificationHandlers{
 		// When a block higher than maxBlocks connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, h int32) {
-			fmt.Printf("+")
 			if h > int32(*maxBlocks) {
-				safeClose(exit)
+				close(exit)
 			}
 			if h >= int32(*matureBlock)-1 {
 				fmt.Printf("\n")
 				if height != nil {
 					height <- h
 				}
+			} else {
+				fmt.Printf("\r%d/%d", h, *matureBlock)
 			}
 		},
 		// Send a signal that a tx has been accepted into the mempool. Based on
 		// the tx curve, the receiver will need to wait until required no of tx
 		// are filled up in the mempool
 		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
-			fmt.Printf(".")
 			if txpool != nil {
 				// this will not be blocked because we're creating only
 				// required no of tx and receiving all of them
@@ -128,23 +53,49 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		},
 	}
 
-	var client *rpc.Client
-	for i := 0; i < *maxConnRetries; i++ {
-		if client, err = rpc.New(&rpcConf, &ntfnHandlers); err != nil {
-			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
-			continue
-		}
-		miner.client = client
-		break
+	log.Println("Starting miner on simnet...")
+	args, err := NewBtcdArgs("miner")
+	if err != nil {
+		return nil, err
 	}
-	if miner.client == nil {
-		log.Printf("Cannot start mining rpc client: %v", err)
-		return miner, err
+
+	// set miner args - it listens on a different port
+	// because a node is already running on the default port
+	args.Listen = "127.0.0.1:18550"
+	args.RPCListen = "127.0.0.1:18551"
+	// need to log mining details, so set debuglevel
+	args.DebugLevel = "MINR=trace"
+	// if passed, set blockmaxsize to allow mining large blocks
+	args.Extra = []string{fmt.Sprintf("--blockmaxsize=%d", *maxBlockSize)}
+	// set the actors' mining addresses
+	for _, addr := range miningAddrs {
+		// make sure addr was initialized
+		if addr != nil {
+			args.Extra = append(args.Extra, "--miningaddr="+addr.EncodeAddress())
+		}
+	}
+
+	logFile, err := getLogFile(args.prefix)
+	if err != nil {
+		log.Printf("Cannot get log file, logging disabled: %v", err)
+	}
+	node, err := NewNodeFromArgs(args, ntfnHandlers, logFile)
+
+	miner := &Miner{
+		Node: node,
+	}
+	if err := node.Start(); err != nil {
+		log.Printf("%s: Cannot start mining node: %v", miner, err)
+		return nil, err
+	}
+	if err := node.Connect(); err != nil {
+		log.Printf("%s: Cannot connect to node: %v", miner, err)
+		return nil, err
 	}
 
 	// Register for transaction notifications
 	if err := miner.client.NotifyNewTransactions(false); err != nil {
-		log.Printf("Cannot register for transactions notifications: %v", err)
+		log.Printf("%s: Cannot register for transactions notifications: %v", miner, err)
 		return miner, err
 	}
 
@@ -155,46 +106,18 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 
 	// Register for block notifications.
 	if err := miner.client.NotifyBlocks(); err != nil {
-		log.Printf("Cannot register for block notifications: %v", err)
+		log.Printf("%s: Cannot register for block notifications: %v", miner, err)
 		return miner, err
 	}
 
-	log.Printf("Generating %v blocks ...", *matureBlock)
+	log.Printf("%s: Generating %v blocks...", miner, *matureBlock)
 	return miner, nil
-}
-
-// Shutdown kills the mining btcd process and removes its data and
-// log directories.
-func (m *Miner) Shutdown() {
-	if !m.closed {
-		if m.client != nil {
-			m.client.Shutdown()
-		}
-		if err := Exit(m.cmd); err != nil {
-			log.Printf("Cannot kill mining btcd process: %v", err)
-			return
-		}
-
-		if err := os.RemoveAll(m.datadir); err != nil {
-			log.Printf("Cannot remove mining btcd datadir: %v", err)
-			return
-		}
-		if err := os.RemoveAll(m.logdir); err != nil {
-			log.Printf("Cannot remove mining btcd logdir: %v", err)
-			return
-		}
-
-		m.closed = true
-		log.Println("Miner shutdown successfully")
-	} else {
-		log.Println("Miner already shutdown")
-	}
 }
 
 // StartMining sets the cpu miner to mine coins
 func (m *Miner) StartMining() error {
 	if err := m.client.SetGenerate(true, 1); err != nil {
-		log.Printf("Cannot start mining: %v", err)
+		log.Printf("%s: Cannot start mining: %v", m, err)
 		return err
 	}
 	return nil
@@ -203,7 +126,7 @@ func (m *Miner) StartMining() error {
 // StopMining stops the cpu miner from mining coins
 func (m *Miner) StopMining() error {
 	if err := m.client.SetGenerate(false, 0); err != nil {
-		log.Printf("Cannot stop mining: %v", err)
+		log.Printf("%s: Cannot stop mining: %v", m, err)
 		return err
 	}
 	return nil
