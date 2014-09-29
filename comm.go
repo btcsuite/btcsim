@@ -247,8 +247,15 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 						continue next
 					}
 					txout := com.getUtxo(tx, vout, uint32(n))
-					// add utxo to actor's pool
-					actor.utxoQueue.enqueue <- txout
+					// to be usable, the utxo amount should be
+					// split-able after deducting the fee
+					if txout.Amount > btcutil.Amount((*maxSplit))*(minFee) {
+						// if it's usable, add utxo to actor's pool
+						select {
+						case actor.utxoQueue.enqueue <- txout:
+						case <-com.exit:
+						}
+					}
 				}
 			}
 			// allow Communicate to sync with the processed block
@@ -487,6 +494,10 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 				// totalUtxos = 18000/2 = 9000
 				// totalTx = 120000 - 9000 = 3000
 				multiplier = int(math.Ceil(float64(reqUtxoCount) / float64(reqTxCount)))
+				if multiplier > *maxSplit {
+					// cap maximum splits at maxSplit
+					multiplier = *maxSplit
+				}
 				totalUtxos = reqUtxoCount / multiplier
 			}
 

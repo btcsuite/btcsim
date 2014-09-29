@@ -233,6 +233,7 @@ func (a *Actor) simulateTx(downstream <-chan btcutil.Address, txpool chan<- stru
 				}}
 
 				// Provide a fees of minFee to ensure the tx gets mined
+				// the utxo amount is guaranteed to be > maxSplit*minFee
 				amt := utxo.Amount - minFee
 				amounts := map[btcutil.Address]btcutil.Amount{
 					addr: amt,
@@ -279,6 +280,7 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 				}}
 
 				// Provide a fees of minFee to ensure the tx gets mined
+				// the utxo amount is guaranteed to be > maxSplit*minFee
 				amt := utxo.Amount - minFee
 				amounts := map[btcutil.Address]btcutil.Amount{}
 
