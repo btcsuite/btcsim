@@ -60,6 +60,9 @@ var (
 	// maxBlockSize defines the maximum block size to be passed as -blockmaxsize to the miner
 	maxBlockSize = flag.Int("maxblocksize", 999000, "Maximum block size used by the miner")
 
+	// maxSplit defines the maximum number of pieces to divide a utxo into
+	maxSplit = flag.Int("maxsplit", 100, "Maximum number of pieces to divide a utxo into")
+
 	// txCurvePath is the path to a CSV file containing the block, utxo count, tx count
 	txCurvePath = flag.String("txcurve", "",
 		"Path to the CSV File containing block, utxo count, tx count fields")
@@ -114,6 +117,12 @@ func main() {
 		if block < *matureBlock {
 			*matureBlock = block
 		}
+	}
+
+	if *maxSplit > *maxAddresses {
+		// cap max split at maxaddresses, becauase each split requires
+		// a unique return address
+		*maxSplit = *maxAddresses
 	}
 
 	actors := make([]*Actor, 0, *maxActors)
