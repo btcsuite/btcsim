@@ -3,14 +3,14 @@ package main
 import "testing"
 
 func TestNewBtcwalletArgs(t *testing.T) {
-	btcdArgs, err := NewBtcdArgs("node")
-	args, err := NewBtcwalletArgs(18554, btcdArgs)
-	defer btcdArgs.Cleanup()
+	BtcdArgs, err := NewBtcdArgs("node")
+	args, err := NewBtcwalletArgs(18554, BtcdArgs)
+	defer BtcdArgs.Cleanup()
 	defer args.Cleanup()
 	if err != nil {
 		t.Errorf("NewBtcwalletArgs error: %v", err)
 	}
-	expectedArgs := &btcwalletArgs{
+	expectedArgs := &BtcwalletArgs{
 		// fixed
 		RPCListen:  "127.0.0.1:18554",
 		RPCConnect: "127.0.0.1:18556",
