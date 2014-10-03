@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"math"
 	"os"
@@ -10,6 +11,13 @@ import (
 	"github.com/conformal/btcutil"
 	"github.com/conformal/btcwire"
 )
+
+// MissingCertPairFile is raised when one of the cert pair files is missing
+type MissingCertPairFile string
+
+func (m MissingCertPairFile) Error() string {
+	return fmt.Sprintf("could not find TLS certificate pair file: %v", string(m))
+}
 
 const (
 	// SimRows is the number of rows in the default curve
@@ -93,6 +101,25 @@ func (s *Simulation) updateFlags() {
 // which communicates with the actors. It waits until the simulation
 // finishes or is interrupted
 func (s *Simulation) Start() error {
+
+	// re-use existing cert, key if both are present
+	// if only one of cert, key is missing, exit with err message
+	haveCert := fileExists(CertFile)
+	haveKey := fileExists(KeyFile)
+	switch {
+	case haveCert && !haveKey:
+		log.Printf("Missing key: '%s', delete cert: '%s' to auto-generate a new cert pair", KeyFile, CertFile)
+		return ErrInvalidCertPair
+	case !haveCert && haveKey:
+		log.Printf("Missing cert: '%s', delete key: '%s' to auto-generate a new cert pair", CertFile, KeyFile)
+		return ErrInvalidCertPair
+	case !haveCert:
+		// generate new cert pair if both cert and key are missing
+		err := genCertPair(CertFile, KeyFile)
+		if err != nil {
+			return err
+		}
+	}
 
 	ntfnHandlers := &rpc.NotificationHandlers{
 		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {

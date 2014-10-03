@@ -6,11 +6,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	rpc "github.com/conformal/btcrpcclient"
-	"github.com/conformal/btcutil"
 	"github.com/conformal/btcwire"
 )
 
@@ -68,9 +66,8 @@ func (a *btcdArgs) SetDefaults() error {
 		return err
 	}
 	a.LogDir = logdir
-	appDir := btcutil.AppDataDir(a.exe, false)
-	a.RPCCert = filepath.Join(appDir, "rpc.cert")
-	a.RPCKey = filepath.Join(appDir, "rpc.key")
+	a.RPCCert = CertFile
+	a.RPCKey = KeyFile
 	cert, err := ioutil.ReadFile(a.RPCCert)
 	if err != nil {
 		return err

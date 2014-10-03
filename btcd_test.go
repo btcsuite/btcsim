@@ -4,6 +4,10 @@ import "testing"
 
 func TestNewBtcdArgs(t *testing.T) {
 	prefix := "miner"
+	err := genCertPair(CertFile, KeyFile)
+	if err != nil {
+		t.Errorf("genCertPair error: %v", err)
+	}
 	args, err := NewBtcdArgs(prefix)
 	defer args.Cleanup()
 	if err != nil {

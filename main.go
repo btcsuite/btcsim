@@ -10,6 +10,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+
+	"github.com/conformal/btcutil"
 
 	"math/rand"
 	_ "net/http/pprof"
@@ -49,8 +52,22 @@ var (
 		"Path to the CSV File containing block, utxo count, tx count fields")
 )
 
+var (
+	AppDataDir, CertFile, KeyFile string
+)
+
 func init() {
 	flag.Parse()
+
+	AppDataDir = btcutil.AppDataDir("btcsim", false)
+	if !fileExists(AppDataDir) {
+		if err := os.Mkdir(AppDataDir, 0700); err != nil {
+			log.Fatalf("Cannot create app data dir: %v", err)
+		}
+	}
+	CertFile = filepath.Join(AppDataDir, "rpc.cert")
+	KeyFile = filepath.Join(AppDataDir, "rpc.key")
+
 }
 
 func main() {
