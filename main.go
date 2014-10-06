@@ -53,21 +53,25 @@ var (
 )
 
 var (
-	AppDataDir, CertFile, KeyFile string
+	// AppDataDir is the path to the working directory set using btcutil.AppDataDir
+	AppDataDir = btcutil.AppDataDir("btcsim", false)
+
+	// CertFile is the path to the certificate file of a cert-key pair used for RPC connections
+	CertFile = filepath.Join(AppDataDir, "rpc.cert")
+
+	// KeyFile is the path to the key file of a cert-key pair used for RPC connections
+	KeyFile = filepath.Join(AppDataDir, "rpc.key")
 )
 
 func init() {
 	flag.Parse()
 
-	AppDataDir = btcutil.AppDataDir("btcsim", false)
+	// make sure the app data dir exists
 	if !fileExists(AppDataDir) {
 		if err := os.Mkdir(AppDataDir, 0700); err != nil {
 			log.Fatalf("Cannot create app data dir: %v", err)
 		}
 	}
-	CertFile = filepath.Join(AppDataDir, "rpc.cert")
-	KeyFile = filepath.Join(AppDataDir, "rpc.key")
-
 }
 
 func main() {
@@ -91,6 +95,7 @@ func main() {
 	simulation.readTxCurve(*txCurvePath)
 	simulation.updateFlags()
 	if err := simulation.Start(); err != nil {
+		log.Printf("Cannot start simulation: %v", err)
 		os.Exit(1)
 	}
 }

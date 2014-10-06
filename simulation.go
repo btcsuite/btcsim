@@ -1,7 +1,7 @@
 package main
 
 import (
-	"errors"
+	"fmt"
 	"log"
 	"math"
 	"os"
@@ -108,11 +108,9 @@ func (s *Simulation) Start() error {
 	haveKey := fileExists(KeyFile)
 	switch {
 	case haveCert && !haveKey:
-		log.Printf("Missing key: '%s', delete cert: '%s' to auto-generate a new cert pair", KeyFile, CertFile)
-		return ErrInvalidCertPair
+		return MissingCertPairFile(KeyFile)
 	case !haveCert && haveKey:
-		log.Printf("Missing cert: '%s', delete key: '%s' to auto-generate a new cert pair", CertFile, KeyFile)
-		return ErrInvalidCertPair
+		return MissingCertPairFile(CertFile)
 	case !haveCert:
 		// generate new cert pair if both cert and key are missing
 		err := genCertPair(CertFile, KeyFile)

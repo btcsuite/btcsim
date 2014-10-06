@@ -21,8 +21,6 @@ func TestNewBtcdArgs(t *testing.T) {
 		RPCPass:   "pass",
 		// the rest are env-dependent and variable
 		// don't test these literally
-		RPCCert: "/home/tuxcanfly/.btcd/rpc.cert",
-		RPCKey:  "/home/tuxcanfly/.btcd/rpc.key",
 		DataDir: "/tmp/user/1000/miner-data948809262",
 		LogDir:  "/tmp/user/1000/miner-logs649955253",
 	}

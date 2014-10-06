@@ -20,8 +20,6 @@ type btcdArgs struct {
 	Listen     string
 	RPCListen  string
 	RPCConnect string
-	RPCCert    string
-	RPCKey     string
 	DataDir    string
 	LogDir     string
 	Profile    string
@@ -66,9 +64,7 @@ func (a *btcdArgs) SetDefaults() error {
 		return err
 	}
 	a.LogDir = logdir
-	a.RPCCert = CertFile
-	a.RPCKey = KeyFile
-	cert, err := ioutil.ReadFile(a.RPCCert)
+	cert, err := ioutil.ReadFile(CertFile)
 	if err != nil {
 		return err
 	}
@@ -107,14 +103,10 @@ func (a *btcdArgs) Arguments() []string {
 		// --rpcconnect
 		args = append(args, fmt.Sprintf("--rpcconnect=%s", a.RPCConnect))
 	}
-	if a.RPCCert != "" {
-		// --rpccert
-		args = append(args, fmt.Sprintf("--rpccert=%s", a.RPCCert))
-	}
-	if a.RPCKey != "" {
-		// --rpckey
-		args = append(args, fmt.Sprintf("--rpckey=%s", a.RPCKey))
-	}
+	// --rpccert
+	args = append(args, fmt.Sprintf("--rpccert=%s", CertFile))
+	// --rpckey
+	args = append(args, fmt.Sprintf("--rpckey=%s", KeyFile))
 	if a.DataDir != "" {
 		// --datadir
 		args = append(args, fmt.Sprintf("--datadir=%s", a.DataDir))

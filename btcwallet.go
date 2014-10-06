@@ -19,8 +19,6 @@ type btcwalletArgs struct {
 	Password   string
 	RPCListen  string
 	RPCConnect string
-	RPCCert    string
-	RPCKey     string
 	CAFile     string
 	DataDir    string
 	LogDir     string
@@ -43,9 +41,7 @@ func NewBtcwalletArgs(port uint16, nodeArgs *btcdArgs) (*btcwalletArgs, error) {
 		Username:     "user",
 		Password:     "pass",
 		Certificates: nodeArgs.certificates,
-		RPCCert:      nodeArgs.RPCCert,
-		RPCKey:       nodeArgs.RPCKey,
-		CAFile:       nodeArgs.RPCCert,
+		CAFile:       CertFile,
 
 		prefix:   fmt.Sprintf("actor-%d", port),
 		exe:      "btcwallet",
@@ -101,14 +97,10 @@ func (a *btcwalletArgs) Arguments() []string {
 		// --rpcconnect
 		args = append(args, fmt.Sprintf("--rpcconnect=%s", a.RPCConnect))
 	}
-	if a.RPCCert != "" {
-		// --rpccert
-		args = append(args, fmt.Sprintf("--rpccert=%s", a.RPCCert))
-	}
-	if a.RPCKey != "" {
-		// --rpckey
-		args = append(args, fmt.Sprintf("--rpckey=%s", a.RPCKey))
-	}
+	// --rpccert
+	args = append(args, fmt.Sprintf("--rpccert=%s", CertFile))
+	// --rpckey
+	args = append(args, fmt.Sprintf("--rpckey=%s", KeyFile))
 	if a.CAFile != "" {
 		// --cafile
 		args = append(args, fmt.Sprintf("--cafile=%s", a.CAFile))

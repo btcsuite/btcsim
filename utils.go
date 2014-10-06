@@ -54,11 +54,7 @@ func readCSV(r io.Reader) (map[int32]*Row, error) {
 }
 
 func getLogFile(prefix string) (*os.File, error) {
-	logFile, err := os.Create(filepath.Join(AppDataDir, fmt.Sprintf("%s.log", prefix)))
-	if err != nil {
-		return logFile, err
-	}
-	return logFile, nil
+	return os.Create(filepath.Join(AppDataDir, fmt.Sprintf("%s.log", prefix)))
 }
 
 // genCertPair generates a key/cert pair to the paths provided.

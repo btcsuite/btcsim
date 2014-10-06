@@ -13,8 +13,8 @@ func TestNewBtcwalletArgs(t *testing.T) {
 	if err != nil {
 		t.Errorf("NewBtcwalletArgs error: %v", err)
 	}
-	defer os.Remove(args.RPCCert)
-	defer os.Remove(args.RPCKey)
+	defer os.Remove(CertFile)
+	defer os.Remove(KeyFile)
 	expectedArgs := &btcwalletArgs{
 		// fixed
 		RPCListen:  "127.0.0.1:18554",
@@ -23,8 +23,6 @@ func TestNewBtcwalletArgs(t *testing.T) {
 		Password:   "pass",
 		// the rest are env-dependent and variable
 		// don't test these literally
-		RPCCert: "/home/tuxcanfly/.btcsim/rpc.cert",
-		RPCKey:  "/home/tuxcanfly/.btcsim/rpc.key",
 		CAFile:  "/home/tuxcanfly/.btcsim/rpc.cert",
 		DataDir: "/tmp/user/1000/actor-data948809262",
 		LogDir:  "/tmp/user/1000/actor-logs649955253",
