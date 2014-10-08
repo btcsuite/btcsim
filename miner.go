@@ -33,7 +33,6 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 				close(exit)
 			}
 			if h >= int32(*matureBlock)-1 {
-				fmt.Printf("\n")
 				if height != nil {
 					height <- h
 				}

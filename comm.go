@@ -269,8 +269,8 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 					utxoCount += len(a.utxoQueue.utxos)
 				}
 				txCount = len(block.Transactions())
-				log.Printf("%v: block# %v: no of utxos: %v, no of transactions: %v", b.height,
-					b.hash, utxoCount, txCount)
+				log.Printf("Block %s (height %d) attached with %d transactions", b.hash, b.height, txCount)
+				log.Printf("%d transaction outputs available to spend", utxoCount)
 				select {
 				case com.blockQueue.processed <- b:
 				case <-com.exit:
@@ -545,7 +545,8 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 				}
 			}
 
-			fmt.Printf("\nWaiting for miner...")
+			fmt.Printf("\n")
+			log.Printf("Waiting for miner...")
 			wg.Wait()
 			// mine the above tx in the next block
 			if err := miner.StartMining(); err != nil {
