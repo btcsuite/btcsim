@@ -9,7 +9,7 @@ func TestNewBtcdArgs(t *testing.T) {
 	if err != nil {
 		t.Errorf("NewBtcdArgs error: %v", err)
 	}
-	expectedArgs := &btcdArgs{
+	expectedArgs := &BtcdArgs{
 		// fixed
 		Listen:    "127.0.0.1:18555",
 		RPCListen: "127.0.0.1:18556",

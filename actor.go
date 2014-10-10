@@ -60,7 +60,7 @@ func NewActor(node *Node, port uint16) (*Actor, error) {
 	}
 
 	// Set btcwallet node args
-	args, err := NewBtcwalletArgs(port, node.Args.(*btcdArgs))
+	args, err := NewBtcwalletArgs(port, node.Args.(*BtcdArgs))
 	if err != nil {
 		return nil, err
 	}

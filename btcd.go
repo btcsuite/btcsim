@@ -14,9 +14,9 @@ import (
 	"github.com/conformal/btcwire"
 )
 
-// btcdArgs contains all the args and data required to launch a btcd
+// BtcdArgs contains all the args and data required to launch a btcd
 // instance and connect the rpc client to it
-type btcdArgs struct {
+type BtcdArgs struct {
 	RPCUser    string
 	RPCPass    string
 	Listen     string
@@ -36,9 +36,9 @@ type btcdArgs struct {
 	certificates []byte
 }
 
-// NewBtcdArgs returns a btcdArgs with all default values
-func NewBtcdArgs(prefix string) (*btcdArgs, error) {
-	a := &btcdArgs{
+// NewBtcdArgs returns a BtcdArgs with all default values
+func NewBtcdArgs(prefix string) (*BtcdArgs, error) {
+	a := &BtcdArgs{
 		Listen:    "127.0.0.1:18555",
 		RPCListen: "127.0.0.1:18556",
 		RPCUser:   "user",
@@ -57,7 +57,7 @@ func NewBtcdArgs(prefix string) (*btcdArgs, error) {
 // SetDefaults sets the default values of args
 // it creates tmp data and log directories and must
 // be cleaned up by calling Cleanup
-func (a *btcdArgs) SetDefaults() error {
+func (a *BtcdArgs) SetDefaults() error {
 	datadir, err := ioutil.TempDir("", a.prefix+"-data")
 	if err != nil {
 		return err
@@ -80,13 +80,13 @@ func (a *btcdArgs) SetDefaults() error {
 }
 
 // String returns a printable name of this instance
-func (a *btcdArgs) String() string {
+func (a *BtcdArgs) String() string {
 	return a.prefix
 }
 
 // Arguments returns an array of arguments that be used to launch the
 // btcd instance
-func (a *btcdArgs) Arguments() []string {
+func (a *BtcdArgs) Arguments() []string {
 	args := []string{}
 	// --simnet
 	args = append(args, fmt.Sprintf("--%s", strings.ToLower(btcwire.SimNet.String())))
@@ -139,13 +139,13 @@ func (a *btcdArgs) Arguments() []string {
 }
 
 // Command returns Cmd of the btcd instance
-func (a *btcdArgs) Command() *exec.Cmd {
+func (a *BtcdArgs) Command() *exec.Cmd {
 	return exec.Command(a.exe, a.Arguments()...)
 }
 
 // RPCConnConfig returns the rpc connection config that can be used
 // to connect to the btcd instance that is launched on Start
-func (a *btcdArgs) RPCConnConfig() rpc.ConnConfig {
+func (a *BtcdArgs) RPCConnConfig() rpc.ConnConfig {
 	return rpc.ConnConfig{
 		Host:                 a.RPCListen,
 		Endpoint:             a.endpoint,
@@ -157,7 +157,7 @@ func (a *btcdArgs) RPCConnConfig() rpc.ConnConfig {
 }
 
 // Cleanup removes the tmp data and log directories
-func (a *btcdArgs) Cleanup() error {
+func (a *BtcdArgs) Cleanup() error {
 	dirs := []string{
 		a.LogDir,
 		a.DataDir,

@@ -29,8 +29,8 @@ type Args interface {
 
 // Node is a RPC server node, typically btcd or btcwallet and functions to
 // manage the instance
-// All functions common to btcd and btcwallet go here while btcdArgs and
-// btcwalletArgs hold the different implementations
+// All functions common to btcd and btcwallet go here while BtcdArgs and
+// BtcwalletArgs hold the different implementations
 type Node struct {
 	Args
 	handlers *rpc.NotificationHandlers

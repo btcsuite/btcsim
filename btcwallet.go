@@ -12,9 +12,9 @@ import (
 	"github.com/conformal/btcwire"
 )
 
-// btcwalletArgs contains all the args and data required to launch a btcwallet
+// BtcwalletArgs contains all the args and data required to launch a btcwallet
 // instance and connect the rpc client to it
-type btcwalletArgs struct {
+type BtcwalletArgs struct {
 	Username   string
 	Password   string
 	RPCListen  string
@@ -34,9 +34,9 @@ type btcwalletArgs struct {
 	endpoint string
 }
 
-// NewBtcwalletArgs returns a btcwalletArgs with all default values
-func NewBtcwalletArgs(port uint16, nodeArgs *btcdArgs) (*btcwalletArgs, error) {
-	a := &btcwalletArgs{
+// NewBtcwalletArgs returns a BtcwalletArgs with all default values
+func NewBtcwalletArgs(port uint16, nodeArgs *BtcdArgs) (*BtcwalletArgs, error) {
+	a := &BtcwalletArgs{
 		RPCListen:    fmt.Sprintf("127.0.0.1:%d", port),
 		RPCConnect:   "127.0.0.1:18556",
 		Username:     "user",
@@ -58,7 +58,7 @@ func NewBtcwalletArgs(port uint16, nodeArgs *btcdArgs) (*btcwalletArgs, error) {
 // SetDefaults sets the default values of args
 // it creates tmp data and log directories and must
 // be cleaned up by calling Cleanup
-func (a *btcwalletArgs) SetDefaults() error {
+func (a *BtcwalletArgs) SetDefaults() error {
 	datadir, err := ioutil.TempDir("", a.prefix+"-data")
 	if err != nil {
 		return err
@@ -73,13 +73,13 @@ func (a *btcwalletArgs) SetDefaults() error {
 }
 
 // String returns a printable name of this instance
-func (a *btcwalletArgs) String() string {
+func (a *BtcwalletArgs) String() string {
 	return a.prefix
 }
 
 // Arguments returns an array of arguments that be used to launch the
 // btcwallet instance
-func (a *btcwalletArgs) Arguments() []string {
+func (a *BtcwalletArgs) Arguments() []string {
 	args := []string{}
 	// --simnet
 	args = append(args, fmt.Sprintf("--%s", strings.ToLower(btcwire.SimNet.String())))
@@ -128,13 +128,13 @@ func (a *btcwalletArgs) Arguments() []string {
 }
 
 // Command returns Cmd of the btcwallet instance
-func (a *btcwalletArgs) Command() *exec.Cmd {
+func (a *BtcwalletArgs) Command() *exec.Cmd {
 	return exec.Command(a.exe, a.Arguments()...)
 }
 
 // RPCConnConfig returns the rpc connection config that can be used
 // to connect to the btcwallet instance that is launched on Start
-func (a *btcwalletArgs) RPCConnConfig() rpc.ConnConfig {
+func (a *BtcwalletArgs) RPCConnConfig() rpc.ConnConfig {
 	return rpc.ConnConfig{
 		Host:                 a.RPCListen,
 		Endpoint:             a.endpoint,
@@ -146,7 +146,7 @@ func (a *btcwalletArgs) RPCConnConfig() rpc.ConnConfig {
 }
 
 // Cleanup removes the tmp data and log directories
-func (a *btcwalletArgs) Cleanup() error {
+func (a *BtcwalletArgs) Cleanup() error {
 	dirs := []string{
 		a.LogDir,
 		a.DataDir,
