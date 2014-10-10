@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func TestNewBtcwalletArgs(t *testing.T) {
-	btcdArgs, err := NewBtcdArgs("node")
-	args, err := NewBtcwalletArgs(18554, btcdArgs)
+func TestnewBtcwalletArgs(t *testing.T) {
+	btcdArgs, err := newBtcdArgs("node")
+	args, err := newBtcwalletArgs(18554, btcdArgs)
 	defer btcdArgs.Cleanup()
 	defer args.Cleanup()
 	if err != nil {
-		t.Errorf("NewBtcwalletArgs error: %v", err)
+		t.Errorf("newBtcwalletArgs error: %v", err)
 	}
 	defer os.Remove(CertFile)
 	defer os.Remove(KeyFile)
@@ -28,18 +28,18 @@ func TestNewBtcwalletArgs(t *testing.T) {
 		LogDir:  "/tmp/user/1000/actor-logs649955253",
 	}
 	if len(expectedArgs.Arguments()) != len(args.Arguments()) {
-		t.Errorf("NewBtcwalletArgs wrong len expected: %v, got %v", len(expectedArgs.Arguments()), len(args.Arguments()))
+		t.Errorf("newBtcwalletArgs wrong len expected: %v, got %v", len(expectedArgs.Arguments()), len(args.Arguments()))
 	}
 	expectedArguments := expectedArgs.Arguments()
 	arguments := args.Arguments()
 	for i := 0; i < 4; i++ {
 		if expectedArguments[i] != arguments[i] {
-			t.Errorf("NewBtcwalletArgs expected: %v, got %v", expectedArguments[i], arguments[i])
+			t.Errorf("newBtcwalletArgs expected: %v, got %v", expectedArguments[i], arguments[i])
 		}
 	}
 	for i := 4; i < len(arguments); i++ {
 		if arguments[i] == "" {
-			t.Errorf("NewBtcwalletArgs expected default value, got %v", arguments[i])
+			t.Errorf("newBtcwalletArgs expected default value, got %v", arguments[i])
 		}
 	}
 }

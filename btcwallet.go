@@ -33,8 +33,8 @@ type btcwalletArgs struct {
 	endpoint string
 }
 
-// NewBtcwalletArgs returns a btcwalletArgs with all default values
-func NewBtcwalletArgs(port uint16, nodeArgs *btcdArgs) (*btcwalletArgs, error) {
+// newBtcwalletArgs returns a btcwalletArgs with all default values
+func newBtcwalletArgs(port uint16, nodeArgs *btcdArgs) (*btcwalletArgs, error) {
 	a := &btcwalletArgs{
 		RPCListen:    fmt.Sprintf("127.0.0.1:%d", port),
 		RPCConnect:   "127.0.0.1:18556",

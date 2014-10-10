@@ -136,7 +136,7 @@ func (s *Simulation) Start() error {
 	}
 
 	log.Println("Starting node on simnet...")
-	args, err := NewBtcdArgs("node")
+	args, err := newBtcdArgs("node")
 	if err != nil {
 		log.Printf("Cannot create node args: %v", err)
 		return err

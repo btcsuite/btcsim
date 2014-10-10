@@ -32,8 +32,8 @@ type btcdArgs struct {
 	certificates []byte
 }
 
-// NewBtcdArgs returns a btcdArgs with all default values
-func NewBtcdArgs(prefix string) (*btcdArgs, error) {
+// newBtcdArgs returns a btcdArgs with all default values
+func newBtcdArgs(prefix string) (*btcdArgs, error) {
 	a := &btcdArgs{
 		Listen:    "127.0.0.1:18555",
 		RPCListen: "127.0.0.1:18556",

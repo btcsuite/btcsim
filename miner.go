@@ -53,7 +53,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 	}
 
 	log.Println("Starting miner on simnet...")
-	args, err := NewBtcdArgs("miner")
+	args, err := newBtcdArgs("miner")
 	if err != nil {
 		return nil, err
 	}
