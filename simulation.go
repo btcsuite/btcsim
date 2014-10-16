@@ -56,7 +56,7 @@ func (s *Simulation) readTxCurve(txCurvePath string) error {
 		// linear simulation curve as the default
 		txCurve = make(map[int32]*Row, SimRows)
 		for i := 1; i <= SimRows; i++ {
-			block := int32(*matureBlock + i)
+			block := int32(*startBlock + i)
 			txCurve[block] = &Row{
 				utxoCount: i * SimUtxoCount,
 				txCount:   i * SimTxCount,
@@ -79,11 +79,15 @@ func (s *Simulation) readTxCurve(txCurvePath string) error {
 
 // updateFlags updates the flags based on the txCurve
 func (s *Simulation) updateFlags() {
-	// set min block number from the curve as matureBlock
+	// set min block height from the curve as startBlock
+	// and max block height as stopBlock
 	for k := range s.txCurve {
 		block := int(k)
-		if block < *matureBlock {
-			*matureBlock = block
+		if block < *startBlock {
+			*startBlock = block
+		}
+		if block > *stopBlock {
+			*stopBlock = block
 		}
 	}
 
@@ -92,9 +96,6 @@ func (s *Simulation) updateFlags() {
 		// a unique return address
 		*maxSplit = *maxAddresses
 	}
-	// we need only enough blocks after matureBlock
-	// to generate the tx curve
-	*maxBlocks = *matureBlock + len(s.txCurve) + 1
 }
 
 // Start runs the simulation by launching a node, actors and com.Start

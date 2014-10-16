@@ -25,19 +25,16 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 	height chan<- int32, txpool chan<- struct{}) (*Miner, error) {
 
 	ntfnHandlers := &rpc.NotificationHandlers{
-		// When a block higher than maxBlocks connects to the chain,
+		// When a block higher than stopBlock connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *btcwire.ShaHash, h int32) {
-			if h > int32(*maxBlocks) {
-				close(exit)
-			}
-			if h >= int32(*matureBlock)-1 {
+			if h >= int32(*startBlock)-1 {
 				if height != nil {
 					height <- h
 				}
 			} else {
-				fmt.Printf("\r%d/%d", h, *matureBlock)
+				fmt.Printf("\r%d/%d", h, *startBlock)
 			}
 		},
 		// Send a signal that a tx has been accepted into the mempool. Based on
@@ -109,7 +106,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		return miner, err
 	}
 
-	log.Printf("%s: Generating %v blocks...", miner, *matureBlock)
+	log.Printf("%s: Generating %v blocks...", miner, *startBlock)
 	return miner, nil
 }
 

@@ -263,7 +263,14 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 				}
 			}
 			// allow Communicate to sync with the processed block
-			if b.height >= int32(*matureBlock)-1 {
+			if b.height == int32(*startBlock)-1 {
+				select {
+				case com.blockQueue.processed <- b:
+				case <-com.exit:
+					return
+				}
+			}
+			if b.height >= int32(*startBlock) {
 				var txCount, utxoCount int
 				for _, a := range actors {
 					utxoCount += len(a.utxoQueue.utxos)
@@ -412,6 +419,12 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 		select {
 		case h := <-com.height:
 
+			// stop simulation if we're at the last block
+			if h > int32(*stopBlock) {
+				close(com.exit)
+				return
+			}
+
 			// disable mining until the required no. of tx are in mempool
 			if err := miner.StopMining(); err != nil {
 				close(com.exit)
@@ -461,7 +474,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 
 			// in case the next row doesn't exist, we initialize the required no of utxos to zero
 			// so we keep the utxoCount same as current count
-			next, ok := txCurve[h+1]
+			next, ok := txCurve[h+2]
 			if !ok {
 				next = &Row{}
 				next.utxoCount = utxoCount
@@ -475,7 +488,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 
 			// in case this row doesn't exist, we initialize the required no of tx to reqUtxoCount
 			// i.e one tx per utxo required
-			row, ok := txCurve[h]
+			row, ok := txCurve[h+1]
 			if !ok {
 				row = &Row{}
 				row.txCount = reqUtxoCount

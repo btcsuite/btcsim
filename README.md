@@ -11,7 +11,7 @@ involved. btcsim uses `btcrpcclient` to interface with the RPC servers.
 
 The input is read from a CSV file with the following headers:
 
-    | block number | minimum utxos required | transactions required |
+    | block height | minimum utxos required | transactions required |
 
 Example:
 

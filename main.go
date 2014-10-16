@@ -27,13 +27,13 @@ var (
 	// numActors defines the number of actors to spawn
 	numActors = flag.Int("actors", 1, "Number of actors to be launched")
 
-	// maxBlocks defines how many blocks have to connect to the blockchain
+	// stopBlock defines how many blocks have to connect to the blockchain
 	// before the simulation normally stops
-	maxBlocks = flag.Int("maxblocks", 20000, "Maximum blocks to generate")
+	stopBlock = flag.Int("stopblock", 15000, "Block height to stop the simulation at")
 
-	// matureBlock defines after which block the blockchain is mature enough to start
+	// startBlock defines after which block the blockchain is start enough to start
 	// controlled mining as per the tx curve
-	matureBlock = flag.Int("matureblock", 20000, "Block number at blockchain maturity")
+	startBlock = flag.Int("startblock", 15000, "Block height to start the simulation at")
 
 	// maxAddresses defines the number of addresses to generate per actor
 	maxAddresses = flag.Int("maxaddresses", 100, "Maximum addresses per actor")
