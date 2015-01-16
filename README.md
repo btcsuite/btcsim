@@ -1,8 +1,8 @@
 btcsim
 =======
 
-[![Build Status](https://travis-ci.org/conformal/btcsim.png?branch=master)]
-(https://travis-ci.org/conformal/btcsim)
+[![Build Status](https://travis-ci.org/btcsuite/btcsim.png?branch=master)]
+(https://travis-ci.org/btcsuite/btcsim)
 
 btcsim implements a simulation test driver using the `simnet` network provided
 by `btcd`. It launches the required nodes, manages them, runs the simulation
@@ -65,7 +65,7 @@ $ go get github.com/conformal/btcwallet
 Now install btcsim
 
 ```bash
-$ go get github.com/conformal/btcsim
+$ go get github.com/btcsuite/btcsim
 ```
 
 ## Usage
