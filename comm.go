@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcwire"
 	"github.com/conformal/btcchain"
 	"github.com/conformal/btcnet"
 	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcscript"
-	"github.com/conformal/btcwire"
 )
 
 // Block contains the block hash and height as received in a

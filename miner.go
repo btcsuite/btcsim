@@ -9,8 +9,8 @@ import (
 	"log"
 
 	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcwire"
 	rpc "github.com/conformal/btcrpcclient"
-	"github.com/conformal/btcwire"
 )
 
 // Miner holds all the core features required to register, run, control,

@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/btcsuite/btcwire"
 	rpc "github.com/conformal/btcrpcclient"
-	"github.com/conformal/btcwire"
 )
 
 // btcdArgs contains all the args and data required to launch a btcd
