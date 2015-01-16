@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
+	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwire"
-	rpc "github.com/conformal/btcrpcclient"
 )
 
 // MissingCertPairFile is raised when one of the cert pair files is missing

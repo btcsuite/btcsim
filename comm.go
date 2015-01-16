@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
+	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwire"
 	"github.com/conformal/btcchain"
 	"github.com/conformal/btcnet"
-	rpc "github.com/conformal/btcrpcclient"
 	"github.com/conformal/btcscript"
 )
 

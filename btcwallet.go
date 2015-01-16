@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
+	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcwire"
-	rpc "github.com/conformal/btcrpcclient"
 )
 
 // btcwalletArgs contains all the args and data required to launch a btcwallet
