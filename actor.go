@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcutil"
 	"github.com/conformal/btcjson"
 	rpc "github.com/conformal/btcrpcclient"
-	"github.com/conformal/btcutil"
 	"github.com/conformal/btcwire"
 )
 

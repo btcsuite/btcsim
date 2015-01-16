@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/conformal/btcutil"
+	"github.com/btcsuite/btcutil"
 )
 
 // Row represents a row in the CSV file

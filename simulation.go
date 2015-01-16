@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/btcsuite/btcutil"
 	rpc "github.com/conformal/btcrpcclient"
-	"github.com/conformal/btcutil"
 	"github.com/conformal/btcwire"
 )
 
