@@ -55,7 +55,7 @@ responsible for collecting transactions and mining them when required.
 btcsim depends on `btcd` and `btcwallet`, so install those first
 
 ```bash
-$ go get github.com/conformal/btcd
+$ go get github.com/btcsuite/btcd
 ```
 
 ```bash
