@@ -59,7 +59,7 @@ $ go get github.com/conformal/btcd
 ```
 
 ```bash
-$ go get github.com/conformal/btcwallet
+$ go get github.com/btcsuite/btcwallet
 ```
 
 Now install btcsim
