@@ -17,9 +17,9 @@ import (
 	"github.com/btcsuite/btcchain"
 	"github.com/btcsuite/btcnet"
 	rpc "github.com/btcsuite/btcrpcclient"
+	"github.com/btcsuite/btcscript"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwire"
-	"github.com/conformal/btcscript"
 )
 
 // Block contains the block hash and height as received in a
