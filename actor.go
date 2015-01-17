@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcjson"
 	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwire"
-	"github.com/conformal/btcjson"
 )
 
 // minFee is the minimum tx fee that can be paid
