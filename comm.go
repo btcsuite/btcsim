@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcchain"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcnet"
 	rpc "github.com/btcsuite/btcrpcclient"
-	"github.com/btcsuite/btcscript"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwire"
 )
@@ -299,7 +299,7 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 func (com *Communication) getActor(actors []*Actor,
 	vout *btcwire.TxOut) (*Actor, error) {
 	// get addrs which own this utxo
-	_, addrs, _, err := btcscript.ExtractPkScriptAddrs(vout.PkScript, &btcnet.SimNetParams)
+	_, addrs, _, err := txscript.ExtractPkScriptAddrs(vout.PkScript, &btcnet.SimNetParams)
 	if err != nil {
 		return nil, err
 	}
