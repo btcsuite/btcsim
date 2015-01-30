@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcchain"
+	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcnet"
 	rpc "github.com/btcsuite/btcrpcclient"
@@ -64,7 +64,7 @@ func NewCommunication() *Communication {
 		height:        make(chan int32),
 		split:         make(chan int),
 		txpool:        make(chan struct{}),
-		coinbaseQueue: make(chan *btcutil.Tx, btcchain.CoinbaseMaturity),
+		coinbaseQueue: make(chan *btcutil.Tx, blockchain.CoinbaseMaturity),
 		exit:          make(chan struct{}),
 		errChan:       make(chan struct{}, *numActors),
 		blockQueue: &blockQueue{
@@ -460,7 +460,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			// 20001,50000,25000
 			//
 			// at block 19999, we need to ensure that next block has 40K utxos
-			// we have 19999 - btcchain.CoinbaseMaturity = 19899 utxos
+			// we have 19999 - blockchain.CoinbaseMaturity = 19899 utxos
 			// we need to create 40K-19899 = 20101 utxos so in this case, so
 			// we create 20101 tx which give 1 net utxo output
 			//
