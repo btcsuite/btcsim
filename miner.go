@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwire"
 )
 
 // Miner holds all the core features required to register, run, control,
@@ -28,7 +28,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		// When a block higher than stopBlock connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
-		OnBlockConnected: func(hash *btcwire.ShaHash, h int32) {
+		OnBlockConnected: func(hash *wire.ShaHash, h int32) {
 			if h >= int32(*startBlock)-1 {
 				if height != nil {
 					height <- h
@@ -40,7 +40,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		// Send a signal that a tx has been accepted into the mempool. Based on
 		// the tx curve, the receiver will need to wait until required no of tx
 		// are filled up in the mempool
-		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
+		OnTxAccepted: func(hash *wire.ShaHash, amount btcutil.Amount) {
 			if txpool != nil {
 				// this will not be blocked because we're creating only
 				// required no of tx and receiving all of them

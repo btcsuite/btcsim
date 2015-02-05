@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwire"
 )
 
 // MissingCertPairFile is raised when one of the cert pair files is missing
@@ -121,7 +121,7 @@ func (s *Simulation) Start() error {
 	}
 
 	ntfnHandlers := &rpc.NotificationHandlers{
-		OnBlockConnected: func(hash *btcwire.ShaHash, height int32) {
+		OnBlockConnected: func(hash *wire.ShaHash, height int32) {
 			block := &Block{
 				hash:   hash,
 				height: height,
@@ -131,7 +131,7 @@ func (s *Simulation) Start() error {
 			case <-s.com.exit:
 			}
 		},
-		OnTxAccepted: func(hash *btcwire.ShaHash, amount btcutil.Amount) {
+		OnTxAccepted: func(hash *wire.ShaHash, amount btcutil.Amount) {
 			s.com.timeReceived <- time.Now()
 		},
 	}

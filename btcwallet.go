@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
-	"github.com/btcsuite/btcwire"
 )
 
 // btcwalletArgs contains all the args and data required to launch a btcwallet
@@ -80,7 +80,7 @@ func (a *btcwalletArgs) String() string {
 func (a *btcwalletArgs) Arguments() []string {
 	args := []string{}
 	// --simnet
-	args = append(args, fmt.Sprintf("--%s", strings.ToLower(btcwire.SimNet.String())))
+	args = append(args, fmt.Sprintf("--%s", strings.ToLower(wire.SimNet.String())))
 	if a.Username != "" {
 		// --username
 		args = append(args, fmt.Sprintf("--username=%s", a.Username))

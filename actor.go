@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcjson"
 	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwire"
 )
 
 // minFee is the minimum tx fee that can be paid
@@ -46,7 +46,7 @@ type Actor struct {
 
 // TxOut is a valid tx output that can be used to generate transactions
 type TxOut struct {
-	OutPoint *btcwire.OutPoint
+	OutPoint *wire.OutPoint
 	Amount   btcutil.Amount
 }
 

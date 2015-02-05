@@ -16,16 +16,16 @@ import (
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcnet"
 	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcwire"
 )
 
 // Block contains the block hash and height as received in a
 // OnBlockConnected notification
 type Block struct {
-	hash   *btcwire.ShaHash
+	hash   *wire.ShaHash
 	height int32
 }
 
@@ -297,7 +297,7 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 
 // getActor returns the actor to which this vout belongs to
 func (com *Communication) getActor(actors []*Actor,
-	vout *btcwire.TxOut) (*Actor, error) {
+	vout *wire.TxOut) (*Actor, error) {
 	// get addrs which own this utxo
 	_, addrs, _, err := txscript.ExtractPkScriptAddrs(vout.PkScript, &btcnet.SimNetParams)
 	if err != nil {
@@ -323,8 +323,8 @@ func (com *Communication) getActor(actors []*Actor,
 
 // getUtxo returns a TxOut from Tx and Vout
 func (com *Communication) getUtxo(tx *btcutil.Tx,
-	vout *btcwire.TxOut, index uint32) *TxOut {
-	op := btcwire.NewOutPoint(tx.Sha(), index)
+	vout *wire.TxOut, index uint32) *TxOut {
+	op := wire.NewOutPoint(tx.Sha(), index)
 	unspent := TxOut{
 		OutPoint: op,
 		Amount:   btcutil.Amount(vout.Value),

@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
-	"github.com/btcsuite/btcwire"
 )
 
 // btcdArgs contains all the args and data required to launch a btcd
@@ -82,7 +82,7 @@ func (a *btcdArgs) String() string {
 func (a *btcdArgs) Arguments() []string {
 	args := []string{}
 	// --simnet
-	args = append(args, fmt.Sprintf("--%s", strings.ToLower(btcwire.SimNet.String())))
+	args = append(args, fmt.Sprintf("--%s", strings.ToLower(wire.SimNet.String())))
 	if a.RPCUser != "" {
 		// --rpcuser
 		args = append(args, fmt.Sprintf("--rpcuser=%s", a.RPCUser))
