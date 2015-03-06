@@ -79,7 +79,7 @@ func NewActor(node *Node, port uint16) (*Actor, error) {
 		quit:             make(chan struct{}),
 		ownedAddresses:   make([]btcutil.Address, *maxAddresses),
 		miningAddr:       make(chan btcutil.Address),
-		walletPassphrase: "walletpass",
+		walletPassphrase: "password",
 		utxoQueue: &utxoQueue{
 			enqueue: make(chan *TxOut),
 			dequeue: make(chan *TxOut),
@@ -101,7 +101,6 @@ func NewActor(node *Node, port uint16) (*Actor, error) {
 // removed.
 func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	connected := make(chan struct{})
-	var firstConn bool
 	const timeoutSecs int64 = 3600 * 24
 
 	if err := a.Node.Start(); err != nil {
@@ -111,11 +110,8 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	}
 
 	ntfnHandlers := &rpc.NotificationHandlers{
-		OnBtcdConnected: func(conn bool) {
-			if conn && !firstConn {
-				firstConn = true
-				connected <- struct{}{}
-			}
+		OnClientConnected: func() {
+			connected <- struct{}{}
 		},
 	}
 	a.handlers = ntfnHandlers
@@ -128,12 +124,6 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Wait for btcd to connect
 	<-connected
-
-	// Create the wallet.
-	if err := a.client.CreateEncryptedWallet(a.walletPassphrase); err != nil {
-		com.errChan <- struct{}{}
-		return err
-	}
 
 	// Wait for wallet sync
 	for i := 0; i < *maxConnRetries; i++ {

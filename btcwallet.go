@@ -121,6 +121,8 @@ func (a *btcwalletArgs) Arguments() []string {
 		// --debuglevel
 		args = append(args, fmt.Sprintf("--debuglevel=%s", a.DebugLevel))
 	}
+	// --createtemp
+	args = append(args, "--createtemp")
 	args = append(args, a.Extra...)
 	return args
 }
