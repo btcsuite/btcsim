@@ -83,6 +83,13 @@ For more options, see:
 $ btcsim --help
 ```
 
+## Debugging
+
+To debug `btcsim` itself, you can turn on profiling using the `--profile` flag.
+To debug the processes spawned by `btcsim` i.e. `btcd` and `btcwallet`, you can
+check the logs written to `~/.btcsim/`.
+
+
 ## License
 
 Package btcsim is licensed under the liberal ISC License.
