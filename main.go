@@ -34,7 +34,7 @@ import (
 
 var (
 	// maxConnRetries defines the number of times to retry rpc client connections
-	maxConnRetries = flag.Int("maxconnretries", 15, "Maximum retries to connect to rpc client")
+	maxConnRetries = flag.Int("maxconnretries", 30, "Maximum retries to connect to rpc client")
 
 	// numActors defines the number of actors to spawn
 	numActors = flag.Int("actors", 1, "Number of actors to be launched")
