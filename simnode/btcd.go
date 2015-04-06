@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-package main
+package simnode
 
 import (
 	"fmt"
@@ -28,9 +28,9 @@ import (
 	rpc "github.com/btcsuite/btcrpcclient"
 )
 
-// btcdArgs contains all the args and data required to launch a btcd
+// BtcdArgs contains all the args and data required to launch a btcd
 // instance and connect the rpc client to it
-type btcdArgs struct {
+type BtcdArgs struct {
 	RPCUser    string
 	RPCPass    string
 	Listen     string
@@ -40,25 +40,30 @@ type btcdArgs struct {
 	LogDir     string
 	Profile    string
 	DebugLevel string
+	AddrIndex  bool
 	Extra      []string
+	Prefix     string
 
-	prefix       string
 	exe          string
 	endpoint     string
+	certFile     string
+	keyFile      string
 	certificates []byte
 }
 
-// newBtcdArgs returns a btcdArgs with all default values
-func newBtcdArgs(prefix string) (*btcdArgs, error) {
-	a := &btcdArgs{
+// newBtcdArgs returns a BtcdArgs with all default values
+func NewBtcdArgs(prefix string, certFile, keyFile string) (*BtcdArgs, error) {
+	a := &BtcdArgs{
 		Listen:    "127.0.0.1:18555",
 		RPCListen: "127.0.0.1:18556",
 		RPCUser:   "user",
 		RPCPass:   "pass",
+		Prefix:    prefix,
 
-		prefix:   prefix,
 		exe:      "btcd",
 		endpoint: "ws",
+		certFile: certFile,
+		keyFile:  keyFile,
 	}
 	if err := a.SetDefaults(); err != nil {
 		return nil, err
@@ -69,18 +74,18 @@ func newBtcdArgs(prefix string) (*btcdArgs, error) {
 // SetDefaults sets the default values of args
 // it creates tmp data and log directories and must
 // be cleaned up by calling Cleanup
-func (a *btcdArgs) SetDefaults() error {
-	datadir, err := ioutil.TempDir("", a.prefix+"-data")
+func (a *BtcdArgs) SetDefaults() error {
+	datadir, err := ioutil.TempDir("", a.Prefix+"-data")
 	if err != nil {
 		return err
 	}
 	a.DataDir = datadir
-	logdir, err := ioutil.TempDir("", a.prefix+"-logs")
+	logdir, err := ioutil.TempDir("", a.Prefix+"-logs")
 	if err != nil {
 		return err
 	}
 	a.LogDir = logdir
-	cert, err := ioutil.ReadFile(CertFile)
+	cert, err := ioutil.ReadFile(a.certFile)
 	if err != nil {
 		return err
 	}
@@ -89,13 +94,13 @@ func (a *btcdArgs) SetDefaults() error {
 }
 
 // String returns a printable name of this instance
-func (a *btcdArgs) String() string {
-	return a.prefix
+func (a *BtcdArgs) String() string {
+	return a.Prefix
 }
 
 // Arguments returns an array of arguments that be used to launch the
 // btcd instance
-func (a *btcdArgs) Arguments() []string {
+func (a *BtcdArgs) Arguments() []string {
 	args := []string{}
 	// --simnet
 	args = append(args, fmt.Sprintf("--%s", strings.ToLower(wire.SimNet.String())))
@@ -120,9 +125,13 @@ func (a *btcdArgs) Arguments() []string {
 		args = append(args, fmt.Sprintf("--rpcconnect=%s", a.RPCConnect))
 	}
 	// --rpccert
-	args = append(args, fmt.Sprintf("--rpccert=%s", CertFile))
+	args = append(args, fmt.Sprintf("--rpccert=%s", a.certFile))
 	// --rpckey
-	args = append(args, fmt.Sprintf("--rpckey=%s", KeyFile))
+	args = append(args, fmt.Sprintf("--rpckey=%s", a.keyFile))
+	if a.AddrIndex {
+		// --addrindex
+		args = append(args, fmt.Sprintf("--addrindex"))
+	}
 	if a.DataDir != "" {
 		// --datadir
 		args = append(args, fmt.Sprintf("--datadir=%s", a.DataDir))
@@ -144,13 +153,13 @@ func (a *btcdArgs) Arguments() []string {
 }
 
 // Command returns Cmd of the btcd instance
-func (a *btcdArgs) Command() *exec.Cmd {
+func (a *BtcdArgs) Command() *exec.Cmd {
 	return exec.Command(a.exe, a.Arguments()...)
 }
 
 // RPCConnConfig returns the rpc connection config that can be used
 // to connect to the btcd instance that is launched on Start
-func (a *btcdArgs) RPCConnConfig() rpc.ConnConfig {
+func (a *BtcdArgs) RPCConnConfig() rpc.ConnConfig {
 	return rpc.ConnConfig{
 		Host:                 a.RPCListen,
 		Endpoint:             a.endpoint,
@@ -162,7 +171,7 @@ func (a *btcdArgs) RPCConnConfig() rpc.ConnConfig {
 }
 
 // Cleanup removes the tmp data and log directories
-func (a *btcdArgs) Cleanup() error {
+func (a *BtcdArgs) Cleanup() error {
 	dirs := []string{
 		a.LogDir,
 		a.DataDir,

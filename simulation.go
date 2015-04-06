@@ -25,6 +25,7 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
+	"github.com/btcsuite/btcsim/simnode"
 	"github.com/btcsuite/btcutil"
 )
 
@@ -130,7 +131,7 @@ func (s *Simulation) Start() error {
 		return MissingCertPairFile(CertFile)
 	case !haveCert:
 		// generate new cert pair if both cert and key are missing
-		err := genCertPair(CertFile, KeyFile)
+		err := simnode.GenCertPair(CertFile, KeyFile)
 		if err != nil {
 			return err
 		}
@@ -153,16 +154,17 @@ func (s *Simulation) Start() error {
 	}
 
 	log.Println("Starting node on simnet...")
-	args, err := newBtcdArgs("node")
+	args, err := simnode.NewBtcdArgs("node", CertFile, KeyFile)
 	if err != nil {
 		log.Printf("Cannot create node args: %v", err)
 		return err
 	}
-	logFile, err := getLogFile(args.prefix)
+	logFile, err := getLogFile(args.Prefix)
 	if err != nil {
 		log.Printf("Cannot get log file, logging disabled: %v", err)
 	}
-	node, err := NewNodeFromArgs(args, ntfnHandlers, logFile)
+	node, err := simnode.NewNodeFromArgs(args, ntfnHandlers, logFile,
+		*maxConnRetries, AppDataDir)
 	if err != nil {
 		log.Printf("%s: Cannot create node: %v", node, err)
 		return err
@@ -177,13 +179,13 @@ func (s *Simulation) Start() error {
 	}
 
 	// Register for block notifications.
-	if err := node.client.NotifyBlocks(); err != nil {
+	if err := node.Client.NotifyBlocks(); err != nil {
 		log.Printf("%s: Cannot register for block notifications: %v", node, err)
 		return err
 	}
 
 	// Register for transaction notifications
-	if err := node.client.NotifyNewTransactions(false); err != nil {
+	if err := node.Client.NotifyNewTransactions(false); err != nil {
 		log.Printf("%s: Cannot register for transactions notifications: %v", node, err)
 		return err
 	}

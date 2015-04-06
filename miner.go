@@ -22,13 +22,14 @@ import (
 
 	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
+	"github.com/btcsuite/btcsim/simnode"
 	"github.com/btcsuite/btcutil"
 )
 
 // Miner holds all the core features required to register, run, control,
 // and kill a cpu-mining btcd instance.
 type Miner struct {
-	*Node
+	*simnode.Node
 }
 
 // NewMiner starts a cpu-mining enabled btcd instane and returns an rpc client
@@ -62,7 +63,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 	}
 
 	log.Println("Starting miner on simnet...")
-	args, err := newBtcdArgs("miner")
+	args, err := simnode.NewBtcdArgs("miner", CertFile, KeyFile)
 	if err != nil {
 		return nil, err
 	}
@@ -83,11 +84,12 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		}
 	}
 
-	logFile, err := getLogFile(args.prefix)
+	logFile, err := getLogFile(args.Prefix)
 	if err != nil {
 		log.Printf("Cannot get log file, logging disabled: %v", err)
 	}
-	node, err := NewNodeFromArgs(args, ntfnHandlers, logFile)
+	node, err := simnode.NewNodeFromArgs(args, ntfnHandlers, logFile,
+		*maxConnRetries, AppDataDir)
 
 	miner := &Miner{
 		Node: node,
@@ -102,7 +104,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 	}
 
 	// Register for transaction notifications
-	if err := miner.client.NotifyNewTransactions(false); err != nil {
+	if err := miner.Client.NotifyNewTransactions(false); err != nil {
 		log.Printf("%s: Cannot register for transactions notifications: %v", miner, err)
 		return miner, err
 	}
@@ -113,7 +115,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 	}
 
 	// Register for block notifications.
-	if err := miner.client.NotifyBlocks(); err != nil {
+	if err := miner.Client.NotifyBlocks(); err != nil {
 		log.Printf("%s: Cannot register for block notifications: %v", miner, err)
 		return miner, err
 	}
@@ -124,7 +126,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 
 // StartMining sets the cpu miner to mine coins
 func (m *Miner) StartMining() error {
-	if err := m.client.SetGenerate(true, 1); err != nil {
+	if err := m.Client.SetGenerate(true, 1); err != nil {
 		log.Printf("%s: Cannot start mining: %v", m, err)
 		return err
 	}
@@ -133,7 +135,7 @@ func (m *Miner) StartMining() error {
 
 // StopMining stops the cpu miner from mining coins
 func (m *Miner) StopMining() error {
-	if err := m.client.SetGenerate(false, 0); err != nil {
+	if err := m.Client.SetGenerate(false, 0); err != nil {
 		log.Printf("%s: Cannot stop mining: %v", m, err)
 		return err
 	}

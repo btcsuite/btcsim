@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-package main
+package simnode
 
 import (
 	"fmt"
@@ -28,38 +28,41 @@ import (
 	rpc "github.com/btcsuite/btcrpcclient"
 )
 
-// btcwalletArgs contains all the args and data required to launch a btcwallet
+// BtcwalletArgs contains all the args and data required to launch a btcwallet
 // instance and connect the rpc client to it
-type btcwalletArgs struct {
+type BtcwalletArgs struct {
 	Username   string
 	Password   string
 	RPCListen  string
 	RPCConnect string
 	CAFile     string
+	KeyFile    string // TODO(roasbeef): Needs to be public??
 	DataDir    string
 	LogDir     string
 	Profile    string
 	DebugLevel string
+	Prefix     string
 
 	Extra        []string
 	Certificates []byte
 
-	prefix   string
 	exe      string
 	endpoint string
+	certFile string
 }
 
-// newBtcwalletArgs returns a btcwalletArgs with all default values
-func newBtcwalletArgs(port uint16, nodeArgs *btcdArgs) (*btcwalletArgs, error) {
-	a := &btcwalletArgs{
+// newBtcwalletArgs returns a BtcwalletArgs with all default values
+func NewBtcwalletArgs(port uint16, nodeArgs *BtcdArgs) (*BtcwalletArgs, error) {
+	a := &BtcwalletArgs{
 		RPCListen:    fmt.Sprintf("127.0.0.1:%d", port),
 		RPCConnect:   "127.0.0.1:18556",
 		Username:     "user",
 		Password:     "pass",
 		Certificates: nodeArgs.certificates,
-		CAFile:       CertFile,
+		CAFile:       nodeArgs.certFile,
+		KeyFile:      nodeArgs.keyFile,
 
-		prefix:   fmt.Sprintf("actor-%d", port),
+		Prefix:   fmt.Sprintf("actor-%d", port),
 		exe:      "btcwallet",
 		endpoint: "ws",
 	}
@@ -72,13 +75,13 @@ func newBtcwalletArgs(port uint16, nodeArgs *btcdArgs) (*btcwalletArgs, error) {
 // SetDefaults sets the default values of args
 // it creates tmp data and log directories and must
 // be cleaned up by calling Cleanup
-func (a *btcwalletArgs) SetDefaults() error {
-	datadir, err := ioutil.TempDir("", a.prefix+"-data")
+func (a *BtcwalletArgs) SetDefaults() error {
+	datadir, err := ioutil.TempDir("", a.Prefix+"-data")
 	if err != nil {
 		return err
 	}
 	a.DataDir = datadir
-	logdir, err := ioutil.TempDir("", a.prefix+"-logs")
+	logdir, err := ioutil.TempDir("", a.Prefix+"-logs")
 	if err != nil {
 		return err
 	}
@@ -87,13 +90,13 @@ func (a *btcwalletArgs) SetDefaults() error {
 }
 
 // String returns a printable name of this instance
-func (a *btcwalletArgs) String() string {
-	return a.prefix
+func (a *BtcwalletArgs) String() string {
+	return a.Prefix
 }
 
 // Arguments returns an array of arguments that be used to launch the
 // btcwallet instance
-func (a *btcwalletArgs) Arguments() []string {
+func (a *BtcwalletArgs) Arguments() []string {
 	args := []string{}
 	// --simnet
 	args = append(args, fmt.Sprintf("--%s", strings.ToLower(wire.SimNet.String())))
@@ -114,9 +117,9 @@ func (a *btcwalletArgs) Arguments() []string {
 		args = append(args, fmt.Sprintf("--rpcconnect=%s", a.RPCConnect))
 	}
 	// --rpccert
-	args = append(args, fmt.Sprintf("--rpccert=%s", CertFile))
+	args = append(args, fmt.Sprintf("--rpccert=%s", a.CAFile))
 	// --rpckey
-	args = append(args, fmt.Sprintf("--rpckey=%s", KeyFile))
+	args = append(args, fmt.Sprintf("--rpckey=%s", a.KeyFile))
 	if a.CAFile != "" {
 		// --cafile
 		args = append(args, fmt.Sprintf("--cafile=%s", a.CAFile))
@@ -144,13 +147,13 @@ func (a *btcwalletArgs) Arguments() []string {
 }
 
 // Command returns Cmd of the btcwallet instance
-func (a *btcwalletArgs) Command() *exec.Cmd {
+func (a *BtcwalletArgs) Command() *exec.Cmd {
 	return exec.Command(a.exe, a.Arguments()...)
 }
 
 // RPCConnConfig returns the rpc connection config that can be used
 // to connect to the btcwallet instance that is launched on Start
-func (a *btcwalletArgs) RPCConnConfig() rpc.ConnConfig {
+func (a *BtcwalletArgs) RPCConnConfig() rpc.ConnConfig {
 	return rpc.ConnConfig{
 		Host:                 a.RPCListen,
 		Endpoint:             a.endpoint,
@@ -162,7 +165,7 @@ func (a *btcwalletArgs) RPCConnConfig() rpc.ConnConfig {
 }
 
 // Cleanup removes the tmp data and log directories
-func (a *btcwalletArgs) Cleanup() error {
+func (a *BtcwalletArgs) Cleanup() error {
 	dirs := []string{
 		a.LogDir,
 		a.DataDir,
