@@ -14,48 +14,53 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-package main
+package simnode
 
 import (
 	"os"
 	"testing"
 )
 
-func TestnewBtcwalletArgs(t *testing.T) {
-	btcdArgs, err := newBtcdArgs("node")
-	args, err := newBtcwalletArgs(18554, btcdArgs)
-	defer btcdArgs.Cleanup()
+func TestnewBtcdArgs(t *testing.T) {
+	certFile := "rpc.cert"
+	keyFile := "rpc.key"
+	prefix := "miner"
+	err := GenCertPair(certFile, keyFile)
+	defer os.Remove(certFile)
+	defer os.Remove(keyFile)
+
+	if err != nil {
+		t.Errorf("genCertPair error: %v", err)
+	}
+	args, err := NewBtcdArgs(prefix, certFile, keyFile)
 	defer args.Cleanup()
 	if err != nil {
-		t.Errorf("newBtcwalletArgs error: %v", err)
+		t.Errorf("newBtcdArgs error: %v", err)
 	}
-	defer os.Remove(CertFile)
-	defer os.Remove(KeyFile)
-	expectedArgs := &btcwalletArgs{
+	expectedArgs := &BtcdArgs{
 		// fixed
-		RPCListen:  "127.0.0.1:18554",
-		RPCConnect: "127.0.0.1:18556",
-		Username:   "user",
-		Password:   "pass",
+		Listen:    "127.0.0.1:18555",
+		RPCListen: "127.0.0.1:18556",
+		RPCUser:   "user",
+		RPCPass:   "pass",
 		// the rest are env-dependent and variable
 		// don't test these literally
-		CAFile:  "/home/tuxcanfly/.btcsim/rpc.cert",
-		DataDir: "/tmp/user/1000/actor-data948809262",
-		LogDir:  "/tmp/user/1000/actor-logs649955253",
+		DataDir: "/tmp/user/1000/miner-data948809262",
+		LogDir:  "/tmp/user/1000/miner-logs649955253",
 	}
 	if len(expectedArgs.Arguments()) != len(args.Arguments()) {
-		t.Errorf("newBtcwalletArgs wrong len expected: %v, got %v", len(expectedArgs.Arguments()), len(args.Arguments()))
+		t.Errorf("newBtcdArgs wrong len expected: %v, got %v", len(expectedArgs.Arguments()), len(args.Arguments()))
 	}
 	expectedArguments := expectedArgs.Arguments()
 	arguments := args.Arguments()
 	for i := 0; i < 4; i++ {
 		if expectedArguments[i] != arguments[i] {
-			t.Errorf("newBtcwalletArgs expected: %v, got %v", expectedArguments[i], arguments[i])
+			t.Errorf("newBtcdArgs expected: %v, got %v", expectedArguments[i], arguments[i])
 		}
 	}
 	for i := 4; i < len(arguments); i++ {
 		if arguments[i] == "" {
-			t.Errorf("newBtcwalletArgs expected default value, got %v", arguments[i])
+			t.Errorf("newBtcdArgs expected default value, got %v", arguments[i])
 		}
 	}
 }

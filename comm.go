@@ -31,6 +31,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
+	"github.com/btcsuite/btcsim/simnode"
 	"github.com/btcsuite/btcutil"
 )
 
@@ -89,7 +90,7 @@ func NewCommunication() *Communication {
 
 // Start handles the main part of a simulation by starting
 // all the necessary goroutines.
-func (com *Communication) Start(actors []*Actor, node *Node, txCurve map[int32]*Row) (tpsChan chan float64, tpbChan chan int) {
+func (com *Communication) Start(actors []*Actor, node *simnode.Node, txCurve map[int32]*Row) (tpsChan chan float64, tpbChan chan int) {
 	tpsChan = make(chan float64, 1)
 	tpbChan = make(chan int, 1)
 
@@ -138,7 +139,7 @@ func (com *Communication) Start(actors []*Actor, node *Node, txCurve map[int32]*
 	}
 
 	// Add mining node listen interface as a node
-	node.client.AddNode("localhost:18550", rpc.ANAdd)
+	node.Client.AddNode("localhost:18550", rpc.ANAdd)
 
 	// Start a goroutine to estimate tps
 	com.wg.Add(1)
@@ -156,7 +157,7 @@ func (com *Communication) Start(actors []*Actor, node *Node, txCurve map[int32]*
 	go com.queueBlocks()
 
 	com.wg.Add(1)
-	go com.poolUtxos(node.client, actors)
+	go com.poolUtxos(node.Client, actors)
 
 	// Start a goroutine for shuting down the simulation when appropriate
 	com.wg.Add(1)
@@ -587,7 +588,7 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 
 // Shutdown shuts down the simulation by killing the mining and the
 // initial node processes and shuts down all actors.
-func (com *Communication) Shutdown(miner *Miner, actors []*Actor, node *Node) {
+func (com *Communication) Shutdown(miner *Miner, actors []*Actor, node *simnode.Node) {
 	defer com.wg.Done()
 
 	<-com.exit

@@ -28,6 +28,7 @@ import (
 	"github.com/btcsuite/btcd/btcjson/v2/btcjson"
 	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
+	"github.com/btcsuite/btcsim/simnode"
 	"github.com/btcsuite/btcutil"
 )
 
@@ -47,7 +48,7 @@ type utxoQueue struct {
 // Actor describes an actor on the simulation network.  Each actor runs
 // independantly without external input to decide it's behavior.
 type Actor struct {
-	*Node
+	*simnode.Node
 	quit             chan struct{}
 	wg               sync.WaitGroup
 	ownedAddresses   []btcutil.Address
@@ -65,23 +66,23 @@ type TxOut struct {
 // NewActor creates a new actor which runs its own wallet process connecting
 // to the btcd node server specified by node, and listening for simulator
 // websocket connections on the specified port.
-func NewActor(node *Node, port uint16) (*Actor, error) {
+func NewActor(node *simnode.Node, port uint16) (*Actor, error) {
 	// Please don't run this as root.
 	if port < 1024 {
 		return nil, errors.New("invalid actor port")
 	}
 
 	// Set btcwallet node args
-	args, err := newBtcwalletArgs(port, node.Args.(*btcdArgs))
+	args, err := simnode.NewBtcwalletArgs(port, node.Args.(*simnode.BtcdArgs))
 	if err != nil {
 		return nil, err
 	}
 
-	logFile, err := getLogFile(args.prefix)
+	logFile, err := getLogFile(args.Prefix)
 	if err != nil {
 		log.Printf("Cannot get log file, logging disabled: %v", err)
 	}
-	btcwallet, err := NewNodeFromArgs(args, nil, logFile)
+	btcwallet, err := simnode.NewNodeFromArgs(args, nil, logFile, *maxConnRetries, AppDataDir)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +127,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 			connected <- struct{}{}
 		},
 	}
-	a.handlers = ntfnHandlers
+	a.Handlers = ntfnHandlers
 
 	if err := a.Connect(); err != nil {
 		a.Shutdown()
@@ -139,7 +140,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 
 	// Wait for wallet sync
 	for i := 0; i < *maxConnRetries; i++ {
-		if _, err := a.client.GetBalance(""); err != nil {
+		if _, err := a.Client.GetBalance(""); err != nil {
 			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
 			continue
 		}
@@ -150,7 +151,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	log.Printf("%s: Creating wallet addresses...", a)
 	for i := range a.ownedAddresses {
 		fmt.Printf("\r%d/%d", i+1, len(a.ownedAddresses))
-		addr, err := a.client.GetNewAddress()
+		addr, err := a.Client.GetNewAddress()
 		if err != nil {
 			log.Printf("%s: Cannot create address #%d", a, i+1)
 			com.errChan <- struct{}{}
@@ -160,7 +161,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	}
 	fmt.Printf("\n")
 
-	if err := a.client.WalletPassphrase(a.walletPassphrase, timeoutSecs); err != nil {
+	if err := a.Client.WalletPassphrase(a.walletPassphrase, timeoutSecs); err != nil {
 		log.Printf("%s: Cannot unlock wallet: %v", a, err)
 		com.errChan <- struct{}{}
 		return err
@@ -310,12 +311,12 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 
 // sendRawTransaction creates a raw transaction, signs it and sends it
 func (a *Actor) sendRawTransaction(inputs []btcjson.TransactionInput, amounts map[btcutil.Address]btcutil.Amount) error {
-	msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
+	msgTx, err := a.Client.CreateRawTransaction(inputs, amounts)
 	if err != nil {
 		return err
 	}
 	// sign it
-	msgTx, ok, err := a.client.SignRawTransaction(msgTx)
+	msgTx, ok, err := a.Client.SignRawTransaction(msgTx)
 	if err != nil {
 		return err
 	}
@@ -323,7 +324,7 @@ func (a *Actor) sendRawTransaction(inputs []btcjson.TransactionInput, amounts ma
 		return err
 	}
 	// and finally send it.
-	if _, err := a.client.SendRawTransaction(msgTx, false); err != nil {
+	if _, err := a.Client.SendRawTransaction(msgTx, false); err != nil {
 		return err
 	}
 	return nil
