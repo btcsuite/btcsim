@@ -41,11 +41,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
 		OnBlockConnected: func(hash *wire.ShaHash, h int32) {
-			if h >= int32(*startBlock)-1 {
-				if height != nil {
-					height <- h
-				}
-			} else {
+			if h <= int32(*startBlock) {
 				fmt.Printf("\r%d/%d", h, *startBlock)
 			}
 		},
@@ -107,34 +103,19 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		return miner, err
 	}
 
-	// Use just one core for mining.
-	if err := miner.StartMining(); err != nil {
-		return miner, err
-	}
-
 	// Register for block notifications.
 	if err := miner.client.NotifyBlocks(); err != nil {
 		log.Printf("%s: Cannot register for block notifications: %v", miner, err)
 		return miner, err
 	}
 
-	log.Printf("%s: Generating %v blocks...", miner, *startBlock)
 	return miner, nil
 }
 
-// StartMining sets the cpu miner to mine coins
-func (m *Miner) StartMining() error {
-	if err := m.client.SetGenerate(true, 1); err != nil {
-		log.Printf("%s: Cannot start mining: %v", m, err)
-		return err
-	}
-	return nil
-}
-
-// StopMining stops the cpu miner from mining coins
-func (m *Miner) StopMining() error {
-	if err := m.client.SetGenerate(false, 0); err != nil {
-		log.Printf("%s: Cannot stop mining: %v", m, err)
+// Generate makes the CPU miner mine the requested number of blocks
+func (m *Miner) Generate(numBlocks uint32) error {
+	if _, err := m.client.Generate(numBlocks); err != nil {
+		log.Printf("%s: Cannot generate %d blocks: %v", m, numBlocks, err)
 		return err
 	}
 	return nil

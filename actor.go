@@ -65,14 +65,14 @@ type TxOut struct {
 // NewActor creates a new actor which runs its own wallet process connecting
 // to the btcd node server specified by node, and listening for simulator
 // websocket connections on the specified port.
-func NewActor(node *Node, port uint16) (*Actor, error) {
+func NewActor(port uint16) (*Actor, error) {
 	// Please don't run this as root.
 	if port < 1024 {
 		return nil, errors.New("invalid actor port")
 	}
 
 	// Set btcwallet node args
-	args, err := newBtcwalletArgs(port, node.Args.(*btcdArgs))
+	args, err := newBtcwalletArgs(port)
 	if err != nil {
 		return nil, err
 	}

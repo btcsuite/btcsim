@@ -22,9 +22,7 @@ import (
 )
 
 func TestnewBtcwalletArgs(t *testing.T) {
-	btcdArgs, err := newBtcdArgs("node")
-	args, err := newBtcwalletArgs(18554, btcdArgs)
-	defer btcdArgs.Cleanup()
+	args, err := newBtcwalletArgs(18554)
 	defer args.Cleanup()
 	if err != nil {
 		t.Errorf("newBtcwalletArgs error: %v", err)

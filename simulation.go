@@ -189,7 +189,7 @@ func (s *Simulation) Start() error {
 	}
 
 	for i := 0; i < *numActors; i++ {
-		a, err := NewActor(node, uint16(18557+i))
+		a, err := NewActor(uint16(18557 + i))
 		if err != nil {
 			log.Printf("%s: Cannot create actor: %v", a, err)
 			continue
