@@ -126,7 +126,7 @@ func (com *Communication) Start(actors []*Actor, node *Node, txCurve map[int32]*
 		}
 	}
 
-	// Start mining.
+	// Start a miner process.
 	miner, err := NewMiner(miningAddrs, com.exit, com.height, com.txpool)
 	if err != nil {
 		close(com.exit)
@@ -428,18 +428,18 @@ func (com *Communication) estimateTpb(tpbChan chan<- int) {
 func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, actors []*Actor) {
 	defer com.wg.Done()
 
+	go func() {
+		if err := miner.Generate(uint32(*startBlock) - 1); err != nil {
+			close(com.exit)
+		}
+	}()
+
 	for {
 		select {
 		case h := <-com.height:
 
 			// stop simulation if we're at the last block
 			if h > int32(*stopBlock) {
-				close(com.exit)
-				return
-			}
-
-			// disable mining until the required no. of tx are in mempool
-			if err := miner.StopMining(); err != nil {
 				close(com.exit)
 				return
 			}
@@ -575,10 +575,11 @@ func (com *Communication) Communicate(txCurve map[int32]*Row, miner *Miner, acto
 			log.Printf("Waiting for miner...")
 			wg.Wait()
 			// mine the above tx in the next block
-			if err := miner.StartMining(); err != nil {
-				close(com.exit)
-				return
-			}
+			go func() {
+				if err := miner.Generate(1); err != nil {
+					close(com.exit)
+				}
+			}()
 		case <-com.exit:
 			return
 		}
