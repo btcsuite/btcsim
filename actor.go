@@ -150,7 +150,7 @@ func (a *Actor) Start(stderr, stdout io.Writer, com *Communication) error {
 	log.Printf("%s: Creating wallet addresses...", a)
 	for i := range a.ownedAddresses {
 		fmt.Printf("\r%d/%d", i+1, len(a.ownedAddresses))
-		addr, err := a.client.GetNewAddress("")
+		addr, err := a.client.GetNewAddress("default")
 		if err != nil {
 			log.Printf("%s: Cannot create address #%d", a, i+1)
 			com.errChan <- struct{}{}
