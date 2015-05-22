@@ -50,14 +50,13 @@ type btcwalletArgs struct {
 }
 
 // newBtcwalletArgs returns a btcwalletArgs with all default values
-func newBtcwalletArgs(port uint16, nodeArgs *btcdArgs) (*btcwalletArgs, error) {
+func newBtcwalletArgs(port uint16) (*btcwalletArgs, error) {
 	a := &btcwalletArgs{
-		RPCListen:    fmt.Sprintf("127.0.0.1:%d", port),
-		RPCConnect:   "127.0.0.1:18556",
-		Username:     "user",
-		Password:     "pass",
-		Certificates: nodeArgs.certificates,
-		CAFile:       CertFile,
+		RPCListen:  fmt.Sprintf("127.0.0.1:%d", port),
+		RPCConnect: "127.0.0.1:18556",
+		Username:   "user",
+		Password:   "pass",
+		CAFile:     CertFile,
 
 		prefix:   fmt.Sprintf("actor-%d", port),
 		exe:      "btcwallet",
@@ -83,6 +82,11 @@ func (a *btcwalletArgs) SetDefaults() error {
 		return err
 	}
 	a.LogDir = logdir
+	certs, err := ioutil.ReadFile(CertFile)
+	if err != nil {
+		return err
+	}
+	a.Certificates = certs
 	return nil
 }
 
