@@ -137,7 +137,7 @@ func (s *Simulation) Start() error {
 	}
 
 	ntfnHandlers := &rpc.NotificationHandlers{
-		OnBlockConnected: func(hash *wire.ShaHash, height int32) {
+		OnBlockConnected: func(hash *wire.ShaHash, height int32, time time.Time) {
 			block := &Block{
 				hash:   hash,
 				height: height,

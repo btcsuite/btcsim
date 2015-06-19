@@ -19,6 +19,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
@@ -40,7 +41,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		// When a block higher than stopBlock connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
-		OnBlockConnected: func(hash *wire.ShaHash, h int32) {
+		OnBlockConnected: func(hash *wire.ShaHash, h int32, time time.Time) {
 			if h >= int32(*startBlock)-1 {
 				if height != nil {
 					height <- h
