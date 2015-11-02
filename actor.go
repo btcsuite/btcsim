@@ -310,7 +310,7 @@ func (a *Actor) splitUtxos(split <-chan int, txpool chan<- struct{}) {
 
 // sendRawTransaction creates a raw transaction, signs it and sends it
 func (a *Actor) sendRawTransaction(inputs []btcjson.TransactionInput, amounts map[btcutil.Address]btcutil.Amount) error {
-	msgTx, err := a.client.CreateRawTransaction(inputs, amounts)
+	msgTx, err := a.client.CreateRawTransaction(inputs, amounts, nil)
 	if err != nil {
 		return err
 	}
