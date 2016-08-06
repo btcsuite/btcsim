@@ -1,18 +1,6 @@
-/*
- * Copyright (c) 2014-2015 Conformal Systems LLC <info@conformal.com>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+// Copyright (c) 2014-2016 The btcsuite developers
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
 
 package main
 
@@ -28,6 +16,7 @@ import (
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	rpc "github.com/btcsuite/btcrpcclient"
@@ -37,7 +26,7 @@ import (
 // Block contains the block hash and height as received in a
 // OnBlockConnected notification
 type Block struct {
-	hash   *wire.ShaHash
+	hash   *chainhash.Hash
 	height int32
 }
 
@@ -337,7 +326,7 @@ func (com *Communication) getActor(actors []*Actor,
 // getUtxo returns a TxOut from Tx and Vout
 func (com *Communication) getUtxo(tx *btcutil.Tx,
 	vout *wire.TxOut, index uint32) *TxOut {
-	op := wire.NewOutPoint(tx.Sha(), index)
+	op := wire.NewOutPoint(tx.Hash(), index)
 	unspent := TxOut{
 		OutPoint: op,
 		Amount:   btcutil.Amount(vout.Value),
