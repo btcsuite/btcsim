@@ -1,18 +1,6 @@
-/*
- * Copyright (c) 2014-2015 Conformal Systems LLC <info@conformal.com>
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
+// Copyright (c) 2014-2016 The btcsuite developers
+// Use of this source code is governed by an ISC
+// license that can be found in the LICENSE file.
 
 package main
 
@@ -21,7 +9,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
 )
@@ -41,7 +29,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		// When a block higher than stopBlock connects to the chain,
 		// send a signal to stop actors. This is used so main can break from
 		// select and call actor.Stop to stop actors.
-		OnBlockConnected: func(hash *wire.ShaHash, h int32, time time.Time) {
+		OnBlockConnected: func(hash *chainhash.Hash, h int32, time time.Time) {
 			if h >= int32(*startBlock)-1 {
 				if height != nil {
 					height <- h
@@ -53,7 +41,7 @@ func NewMiner(miningAddrs []btcutil.Address, exit chan struct{},
 		// Send a signal that a tx has been accepted into the mempool. Based on
 		// the tx curve, the receiver will need to wait until required no of tx
 		// are filled up in the mempool
-		OnTxAccepted: func(hash *wire.ShaHash, amount btcutil.Amount) {
+		OnTxAccepted: func(hash *chainhash.Hash, amount btcutil.Amount) {
 			if txpool != nil {
 				// this will not be blocked because we're creating only
 				// required no of tx and receiving all of them
