@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -65,7 +64,7 @@ func NewCommunication() *Communication {
 		height:        make(chan int32),
 		split:         make(chan int),
 		txpool:        make(chan struct{}),
-		coinbaseQueue: make(chan *btcutil.Tx, blockchain.CoinbaseMaturity),
+		coinbaseQueue: make(chan *btcutil.Tx, chaincfg.SimNetParams.CoinbaseMaturity),
 		exit:          make(chan struct{}),
 		errChan:       make(chan struct{}, *numActors),
 		blockQueue: &blockQueue{
