@@ -6,7 +6,7 @@ package main
 
 import "testing"
 
-func TestnewBtcdArgs(t *testing.T) {
+func TestNewBtcdArgs(t *testing.T) {
 	prefix := "miner"
 	err := genCertPair(CertFile, KeyFile)
 	if err != nil {
