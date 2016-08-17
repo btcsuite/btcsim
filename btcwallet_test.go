@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestnewBtcwalletArgs(t *testing.T) {
+func TestNewBtcwalletArgs(t *testing.T) {
 	btcdArgs, err := newBtcdArgs("node")
 	args, err := newBtcwalletArgs(18554, btcdArgs)
 	defer btcdArgs.Cleanup()
