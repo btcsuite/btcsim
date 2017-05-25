@@ -1,8 +1,9 @@
 btcsim
 =======
 
-[![Build Status](https://travis-ci.org/btcsuite/btcsim.png?branch=master)]
-(https://travis-ci.org/btcsuite/btcsim)
+[![Build Status](http://img.shields.io/travis/btcsuite/btcsim.svg)](https://travis-ci.org/btcsuite/btcsim)
+[![ISC License](http://img.shields.io/badge/license-ISC-blue.svg)](http://copyfree.org)
+[![GoDoc](https://img.shields.io/badge/godoc-reference-blue.svg)](http://godoc.org/github.com/btcsuite/btcsim)
 
 btcsim implements a simulation test driver using the `simnet` network provided
 by `btcd`. It launches the required nodes, manages them, runs the simulation
@@ -89,7 +90,7 @@ To debug `btcsim` itself, you can turn on profiling using the `--profile` flag.
 To debug the processes spawned by `btcsim` i.e. `btcd` and `btcwallet`, you can
 check the logs written to `~/.btcsim/`.
 
-
 ## License
 
-Package btcsim is licensed under the liberal ISC License.
+Package btcsim is licensed under the [copyfree](http://copyfree.org) ISC
+License.
