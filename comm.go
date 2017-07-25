@@ -49,7 +49,7 @@ type Communication struct {
 	height        chan int32
 	split         chan int
 	txpool        chan struct{}
-	coinbaseQueue chan *btcutil.Tx
+	coinbaseQueue chan *wire.MsgTx
 	blockQueue    *blockQueue
 }
 
@@ -64,7 +64,7 @@ func NewCommunication() *Communication {
 		height:        make(chan int32),
 		split:         make(chan int),
 		txpool:        make(chan struct{}),
-		coinbaseQueue: make(chan *btcutil.Tx, chaincfg.SimNetParams.CoinbaseMaturity),
+		coinbaseQueue: make(chan *wire.MsgTx, chaincfg.SimNetParams.CoinbaseMaturity),
 		exit:          make(chan struct{}),
 		errChan:       make(chan struct{}, *numActors),
 		blockQueue: &blockQueue{
@@ -217,9 +217,9 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 				return
 			}
 			// add new outputs to unspent pool
-			for i, tx := range block.Transactions() {
+			for i, tx := range block.Transactions {
 			next:
-				for n, vout := range tx.MsgTx().TxOut {
+				for n, vout := range tx.TxOut {
 					if i == 0 {
 						// in case of coinbase tx, add it to coinbase queue
 						// if the chan is full, the first tx would be mature
@@ -236,7 +236,7 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 							// so point tx to mTx
 							tx = mTx
 							// reset vout as per the new tx
-							vout = tx.MsgTx().TxOut[n]
+							vout = tx.TxOut[n]
 						}
 					}
 					// fetch actor who owns this output
@@ -275,7 +275,7 @@ func (com *Communication) poolUtxos(client *rpc.Client, actors []*Actor) {
 				for _, a := range actors {
 					utxoCount += len(a.utxoQueue.utxos)
 				}
-				txCount = len(block.Transactions())
+				txCount = len(block.Transactions)
 				log.Printf("Block %s (height %d) attached with %d transactions", b.hash, b.height, txCount)
 				log.Printf("%d transaction outputs available to spend", utxoCount)
 				select {
@@ -323,9 +323,10 @@ func (com *Communication) getActor(actors []*Actor,
 }
 
 // getUtxo returns a TxOut from Tx and Vout
-func (com *Communication) getUtxo(tx *btcutil.Tx,
+func (com *Communication) getUtxo(tx *wire.MsgTx,
 	vout *wire.TxOut, index uint32) *TxOut {
-	op := wire.NewOutPoint(tx.Hash(), index)
+	tx_hash := tx.TxHash()
+	op := wire.NewOutPoint(&tx_hash, index)
 	unspent := TxOut{
 		OutPoint: op,
 		Amount:   btcutil.Amount(vout.Value),
