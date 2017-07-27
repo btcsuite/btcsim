@@ -325,8 +325,8 @@ func (com *Communication) getActor(actors []*Actor,
 // getUtxo returns a TxOut from Tx and Vout
 func (com *Communication) getUtxo(tx *wire.MsgTx,
 	vout *wire.TxOut, index uint32) *TxOut {
-	tx_hash := tx.TxHash()
-	op := wire.NewOutPoint(&tx_hash, index)
+	txHash := tx.TxHash()
+	op := wire.NewOutPoint(&txHash, index)
 	unspent := TxOut{
 		OutPoint: op,
 		Amount:   btcutil.Amount(vout.Value),
