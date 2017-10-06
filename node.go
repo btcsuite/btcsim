@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"time"
 
-	rpc "github.com/btcsuite/btcrpcclient"
+	rpc "github.com/btcsuite/btcd/rpcclient"
 )
 
 // ErrConnectionTimeOut is raised when a rpc client is unable to connect
@@ -76,10 +76,7 @@ func (n *Node) Start() error {
 	if _, err = fmt.Fprintf(pid, "%d\n", n.cmd.Process.Pid); err != nil {
 		return err
 	}
-	if err := pid.Close(); err != nil {
-		return err
-	}
-	return nil
+	return pid.Close()
 }
 
 // Connect tries to connect to the launched node and sets the

@@ -16,9 +16,9 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	rpc "github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
 )
 
