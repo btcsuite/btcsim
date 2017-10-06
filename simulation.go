@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	rpc "github.com/btcsuite/btcrpcclient"
+	rpc "github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcutil"
 )
 

@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcjson"
+	rpc "github.com/btcsuite/btcd/rpcclient"
 	"github.com/btcsuite/btcd/wire"
-	rpc "github.com/btcsuite/btcrpcclient"
 	"github.com/btcsuite/btcutil"
 )
 
